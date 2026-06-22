@@ -45,11 +45,15 @@ async function initDriveSync() {
         accessToken = resp.access_token;
         window.accessToken = accessToken;
         
-        // Update UI button state to synced
-        const btn = document.getElementById('syncDriveBtn');
-        if (btn) {
-          btn.innerText = "☁️ Synced to Cloud";
-          btn.className = "bg-emerald-950 text-emerald-400 border border-emerald-500/30 text-xs px-4 py-2 rounded-lg font-bold";
+        if (typeof checkSyncPrompt === 'function') {
+          checkSyncPrompt();
+        }
+        
+        // Update UI status state to synced
+        const statusEl = document.getElementById('syncStatus');
+        if (statusEl) {
+          statusEl.innerText = "☁️ Drive Sync: Synced";
+          statusEl.className = "text-xs bg-emerald-950 text-emerald-400 border border-emerald-500/30 px-3 py-1.5 rounded font-semibold";
         }
         
         // Sync loop initialization
@@ -57,6 +61,11 @@ async function initDriveSync() {
       }
     });
     console.log("OAuth token client initialized successfully.");
+    
+    // Update the sync banner state
+    if (typeof checkSyncPrompt === 'function') {
+      checkSyncPrompt();
+    }
   } catch (err) {
     console.error("Error initializing Google Identity Services token client:", err);
   }
@@ -171,11 +180,11 @@ async function syncDataToDrive() {
         window.driveFileId = driveFileId;
       }
       
-      // Update UI button state to synced
-      const btn = document.getElementById('syncDriveBtn');
-      if (btn) {
-        btn.innerText = "☁️ Synced to Cloud";
-        btn.className = "bg-emerald-950 text-emerald-400 border border-emerald-500/30 text-xs px-4 py-2 rounded-lg font-bold";
+      // Update UI status state to synced
+      const statusEl = document.getElementById('syncStatus');
+      if (statusEl) {
+        statusEl.innerText = "☁️ Drive Sync: Synced";
+        statusEl.className = "text-xs bg-emerald-950 text-emerald-400 border border-emerald-500/30 px-3 py-1.5 rounded font-semibold";
       }
     } else {
       console.error("Sync response not OK:", response.statusText);

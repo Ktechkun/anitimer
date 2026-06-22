@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,6 +9,7 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="https://apis.google.com/js/api.js" async defer></script>
 </head>
+
 <body class="bg-gray-900 text-gray-100 min-h-screen font-sans">
 
   <div class="max-w-5xl mx-auto p-6">
@@ -18,21 +20,38 @@
         <p class="text-sm text-gray-400">Track progress & live countdowns</p>
       </div>
       <div class="flex items-center gap-3">
-        <button id="syncDriveBtn" onclick="handleAuthClick()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs px-4 py-2 rounded-lg font-bold transition-all flex items-center gap-2">
-          🔄 Connect Google Drive
-        </button>
-        <div class="text-xs bg-gray-800 text-gray-400 px-3 py-1.5 rounded border border-gray-700">
-          Storage: LocalStorage (Drive Sync Ready)
-        </div>
+        <span id="syncStatus" class="text-xs bg-gray-800 text-gray-500 px-3 py-1.5 rounded border border-gray-700/60 font-medium">
+          ☁️ Drive Sync: Not Connected
+        </span>
       </div>
     </header>
+
+    <!-- Cloud Sync Banner Promotion -->
+    <div id="syncPromptBanner" class="hidden bg-indigo-950/60 border border-indigo-500/30 text-indigo-200 px-4 py-3 rounded-xl mb-6 flex justify-between items-center gap-4 transition-all">
+      <div class="flex items-center gap-2.5">
+        <span class="text-lg">☁️</span>
+        <div class="text-xs md:text-sm">
+          <strong class="text-indigo-400 font-bold">Cloud Sync:</strong> Connect Google Drive to back up progress and sync across devices.
+        </div>
+      </div>
+      <div class="flex items-center gap-2 shrink-0">
+        <button onclick="acceptSyncPrompt()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-3 py-1.5 rounded-lg font-bold transition-all">
+          Connect
+        </button>
+        <button onclick="dismissSyncPrompt()" class="text-indigo-400 hover:text-indigo-300 text-xs px-2 py-1.5 rounded-lg font-medium transition-all">
+          Close
+        </button>
+      </div>
+    </div>
 
     <!-- Search Section -->
     <section class="bg-gray-800 p-4 rounded-xl border border-gray-700 mb-8">
       <h2 class="text-lg font-bold mb-3 text-gray-200">Add Anime to Watchlist</h2>
       <div class="flex gap-2">
-        <input id="searchInput" type="text" placeholder="Type anime name (e.g., Chainsaw Man)..." class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
-        <button id="searchBtn" class="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2 rounded font-semibold transition-colors">Search</button>
+        <input id="searchInput" type="text" placeholder="Type anime name (e.g., Chainsaw Man)..."
+          class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+        <button id="searchBtn"
+          class="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2 rounded font-semibold transition-colors">Search</button>
       </div>
       <div id="searchResults" class="grid grid-cols-1 md:grid-cols-2 gap-2 mt-4"></div>
     </section>
@@ -70,7 +89,7 @@
     document.getElementById('searchBtn').addEventListener('click', async () => {
       const term = document.getElementById('searchInput').value;
       if (!term) return;
-      
+
       const query = `
         query ($search: String) {
           Page(perPage: 4) {
@@ -84,7 +103,7 @@
             }
           }
         }`;
-      
+
       const data = await fetchAniList(query, { search: term });
       renderSearchResults(data.Page.media);
     });
@@ -92,7 +111,7 @@
     function renderSearchResults(results) {
       const container = document.getElementById('searchResults');
       container.innerHTML = '';
-      
+
       results.forEach(anime => {
         const title = anime.title.english || anime.title.romaji;
         const div = document.createElement('div');
@@ -132,16 +151,16 @@
       saveAndRefresh();
     }
 
-    function saveAndRefresh(forceRefresh = false) {
+    function saveAndRefresh() {
       localStorage.setItem('anime_watchlist', JSON.stringify(watchlist));
-      loadWatchlistDetails(forceRefresh);
+      loadWatchlistDetails();
       if (typeof handleAuthClick === 'function') {
         if (window.accessToken) {
-          // Change button to indicate saving/syncing
-          const btn = document.getElementById('syncDriveBtn');
-          if (btn) {
-            btn.innerText = "⏳ Saving...";
-            btn.className = "bg-amber-950 text-amber-400 border border-amber-500/30 text-xs px-4 py-2 rounded-lg font-bold";
+          // Change status to indicate saving/syncing
+          const statusEl = document.getElementById('syncStatus');
+          if (statusEl) {
+            statusEl.innerText = "⏳ Drive Sync: Saving...";
+            statusEl.className = "text-xs bg-amber-950 text-amber-400 border border-amber-500/30 px-3 py-1.5 rounded font-semibold";
           }
           syncDataToDrive();
         } else {
@@ -152,21 +171,13 @@
     }
 
     // Hydrate data with airing statuses & calculate gaps
-    async function loadWatchlistDetails(forceRefresh = false) {
+    async function loadWatchlistDetails() {
       if (watchlist.length === 0) {
         document.getElementById('watchlistGrid').innerHTML = '<p class="text-gray-500 text-sm">Your watchlist is empty.</p>';
         return;
       }
 
       const ids = watchlist.map(a => a.id);
-      
-      // Re-render from cache if not forcing a refresh and we already have details for all items
-      if (!forceRefresh && cachedApiDetails.length > 0 && ids.every(id => cachedApiDetails.some(cached => cached.id === id))) {
-        const relevantDetails = cachedApiDetails.filter(cached => ids.includes(cached.id));
-        renderWatchlist(relevantDetails);
-        return;
-      }
-
       const query = `
         query ($ids: [Int]) {
           Page {
@@ -181,10 +192,7 @@
         }`;
 
       const data = await fetchAniList(query, { ids });
-      if (data && data.Page && data.Page.media) {
-        cachedApiDetails = data.Page.media;
-        renderWatchlist(cachedApiDetails);
-      }
+      renderWatchlist(data.Page.media);
     }
 
     function renderWatchlist(apiDetails) {
@@ -193,7 +201,7 @@
 
       watchlist.forEach(localItem => {
         const apiItem = apiDetails.find(a => a.id === localItem.id) || {};
-        
+
         // Calculate total episodes available globally right now
         let currentAiredGlobal = apiItem.episodes || 0;
         let countdownText = "";
@@ -212,7 +220,7 @@
 
         // Catch up metric calculations
         const unwatchedCount = currentAiredGlobal - localItem.progress;
-        const canWatchBadge = unwatchedCount > 0 
+        const canWatchBadge = unwatchedCount > 0
           ? `<span class="bg-amber-500/20 text-amber-400 border border-amber-500/30 text-xs px-2 py-0.5 rounded-full font-bold animate-pulse">${unwatchedCount} Can Watch</span>`
           : `<span class="bg-gray-800 text-gray-500 text-xs px-2 py-0.5 rounded-full">Caught Up</span>`;
 
@@ -246,9 +254,39 @@
       });
     }
 
+    function checkSyncPrompt() {
+      const banner = document.getElementById('syncPromptBanner');
+      if (!banner) return;
+      
+      const dismissed = localStorage.getItem('sync_banner_dismissed') === 'true';
+      const connected = !!window.accessToken;
+      
+      if (!dismissed && !connected) {
+        banner.classList.remove('hidden');
+      } else {
+        banner.classList.add('hidden');
+      }
+    }
+
+    function dismissSyncPrompt() {
+      localStorage.setItem('sync_banner_dismissed', 'true');
+      checkSyncPrompt();
+    }
+
+    function acceptSyncPrompt() {
+      dismissSyncPrompt();
+      if (typeof handleAuthClick === 'function') {
+        handleAuthClick();
+      }
+    }
+
+    // Call check sync prompt on load
+    checkSyncPrompt();
+
     // Initial Dashboard execution on structural load
     loadWatchlistDetails();
   </script>
   <script src="drive.js"></script>
 </body>
+
 </html>
