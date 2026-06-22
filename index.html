@@ -81,6 +81,17 @@
       <div id="watchlistGrid" class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <!-- Javascript dynamic rendering injection target -->
       </div>
+
+      <!-- Pagination controls for watchlist -->
+      <div id="watchlistPagination" class="hidden flex justify-center items-center gap-4 mt-6">
+        <button id="prevWatchlistPage" onclick="changeWatchlistPage(-1)" class="bg-gray-800 hover:bg-gray-700 text-white border border-gray-700/60 text-xs px-3.5 py-2 rounded-lg font-bold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
+          ◀ Previous
+        </button>
+        <span id="watchlistPageNum" class="text-xs text-gray-400 font-semibold min-w-[80px] text-center">Page 1 of 1</span>
+        <button id="nextWatchlistPage" onclick="changeWatchlistPage(1)" class="bg-gray-800 hover:bg-gray-700 text-white border border-gray-700/60 text-xs px-3.5 py-2 rounded-lg font-bold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
+          Next ▶
+        </button>
+      </div>
     </section>
   </div>
 
@@ -91,6 +102,8 @@
     let currentTab = 'watchlist'; // 'watchlist' or 'seasonal'
     let watchlistAbortController = null;
     let seasonalAbortController = null;
+    let watchlistCurrentPage = 1;
+    const watchlistItemsPerPage = 6;
 
     // Base API call to AniList GraphQL
     async function fetchAniList(query, variables = {}, signal = null) {
@@ -258,27 +271,95 @@
       }
     }
 
+    function sortWatchlistByUnwatched(list) {
+      return [...list].sort((a, b) => {
+        const aApi = cachedApiDetails.find(c => c.id === a.id) || {};
+        const bApi = cachedApiDetails.find(c => c.id === b.id) || {};
+
+        // Calculate unwatched count for a
+        let aAired = aApi.episodes || 0;
+        if (aApi.nextAiringEpisode) {
+          const timeDiff = aApi.nextAiringEpisode.airingAt - Math.floor(Date.now() / 1000);
+          aAired = timeDiff > 0 ? aApi.nextAiringEpisode.episode - 1 : aApi.nextAiringEpisode.episode;
+        } else if (aApi.status === 'RELEASING') {
+          aAired = a.progress;
+        }
+        const aUnwatched = Math.max(0, aAired - a.progress);
+
+        // Calculate unwatched count for b
+        let bAired = bApi.episodes || 0;
+        if (bApi.nextAiringEpisode) {
+          const timeDiff = bApi.nextAiringEpisode.airingAt - Math.floor(Date.now() / 1000);
+          bAired = timeDiff > 0 ? bApi.nextAiringEpisode.episode - 1 : bApi.nextAiringEpisode.episode;
+        } else if (bApi.status === 'RELEASING') {
+          bAired = b.progress;
+        }
+        const bUnwatched = Math.max(0, bAired - b.progress);
+
+        // Sort descending by unwatched count
+        if (aUnwatched !== bUnwatched) {
+          return bUnwatched - aUnwatched;
+        }
+        
+        // Alphabetical fallback
+        return a.title.localeCompare(b.title);
+      });
+    }
+
     // Hydrate data with airing statuses & calculate gaps
     async function loadWatchlistDetails(forceRefresh = false, cacheOnly = false) {
       if (watchlist.length === 0) {
         document.getElementById('watchlistGrid').innerHTML = '<p class="text-gray-500 text-sm">Your watchlist is empty.</p>';
+        const paginationContainer = document.getElementById('watchlistPagination');
+        if (paginationContainer) paginationContainer.classList.add('hidden');
         return;
       }
 
-      const ids = watchlist.map(a => a.id);
+      // Sort entire watchlist (unwatched first)
+      const sortedWatchlist = sortWatchlistByUnwatched(watchlist);
 
-      // Render immediately with whatever cache matches we have (or fallback default states)
-      const relevantCachedDetails = cachedApiDetails.filter(cached => ids.includes(cached.id));
-      renderWatchlist(relevantCachedDetails);
+      // Safeguard current page limits
+      const maxPage = Math.ceil(sortedWatchlist.length / watchlistItemsPerPage) || 1;
+      if (watchlistCurrentPage > maxPage) {
+        watchlistCurrentPage = maxPage;
+      }
+
+      // Slice for current page
+      const startIndex = (watchlistCurrentPage - 1) * watchlistItemsPerPage;
+      const endIndex = startIndex + watchlistItemsPerPage;
+      const pageItems = sortedWatchlist.slice(startIndex, endIndex);
+      const pageIds = pageItems.map(a => a.id);
+
+      // Render immediately with whatever cache matches we have for page items
+      const relevantCachedDetails = cachedApiDetails.filter(cached => pageIds.includes(cached.id));
+      renderWatchlist(relevantCachedDetails, pageItems);
+
+      // Update watchlist pagination controls
+      const paginationContainer = document.getElementById('watchlistPagination');
+      if (paginationContainer) {
+        paginationContainer.classList.remove('hidden');
+        document.getElementById('watchlistPageNum').innerText = `Page ${watchlistCurrentPage} of ${maxPage}`;
+        document.getElementById('prevWatchlistPage').disabled = watchlistCurrentPage === 1;
+        document.getElementById('nextWatchlistPage').disabled = watchlistCurrentPage === maxPage;
+      }
 
       if (cacheOnly) {
         return;
       }
 
-      let idsToFetch = ids;
+      // Slice for NEXT page to prefetch
+      const nextStartIndex = endIndex;
+      const nextEndIndex = nextStartIndex + watchlistItemsPerPage;
+      const nextPageItems = sortedWatchlist.slice(nextStartIndex, nextEndIndex);
+
+      // Combine current page and next page IDs
+      const targetItems = [...pageItems, ...nextPageItems];
+      const targetIds = targetItems.map(a => a.id);
+
+      // Compute which shows need to be fetched in the background (from current and next pages)
+      let idsToFetch = targetIds;
       if (!forceRefresh) {
-        // Only fetch shows that are NOT cached OR are cached but NOT finished (ongoing/releasing/not yet released)
-        idsToFetch = ids.filter(id => {
+        idsToFetch = targetIds.filter(id => {
           const cached = cachedApiDetails.find(c => c.id === id);
           if (!cached) return true;
           if (cached.status === 'FINISHED') return false;
@@ -337,8 +418,8 @@
 
           // If the user has not switched away from the watchlist tab, re-render to apply the loaded details
           if (currentTab === 'watchlist') {
-            const freshDetails = cachedApiDetails.filter(cached => ids.includes(cached.id));
-            renderWatchlist(freshDetails);
+            const freshDetails = cachedApiDetails.filter(cached => pageIds.includes(cached.id));
+            renderWatchlist(freshDetails, pageItems);
           }
         }
       } catch (err) {
@@ -346,11 +427,11 @@
       }
     }
 
-    function renderWatchlist(apiDetails) {
+    function renderWatchlist(apiDetails, pageItems) {
       const container = document.getElementById('watchlistGrid');
       container.innerHTML = '';
 
-      watchlist.forEach(localItem => {
+      pageItems.forEach(localItem => {
         const apiItem = apiDetails.find(a => a.id === localItem.id) || {};
         const isNewLoading = !apiItem.id;
 
@@ -430,6 +511,15 @@
       });
     }
 
+    function changeWatchlistPage(dir) {
+      const sortedWatchlist = sortWatchlistByUnwatched(watchlist);
+      const maxPage = Math.ceil(sortedWatchlist.length / watchlistItemsPerPage) || 1;
+      watchlistCurrentPage += dir;
+      if (watchlistCurrentPage < 1) watchlistCurrentPage = 1;
+      if (watchlistCurrentPage > maxPage) watchlistCurrentPage = maxPage;
+      loadWatchlistDetails();
+    }
+
     function checkSyncPrompt() {
       const banner = document.getElementById('syncPromptBanner');
       if (!banner) return;
@@ -483,6 +573,8 @@
         tabWatchlist.className = "px-4 py-2 text-xs md:text-sm font-bold rounded-lg transition-all text-gray-400 hover:text-white cursor-pointer";
         tabSeasonal.className = "px-4 py-2 text-xs md:text-sm font-bold rounded-lg transition-all bg-indigo-600 text-white cursor-pointer";
         seasonSelectContainer.classList.remove('hidden');
+        const paginationContainer = document.getElementById('watchlistPagination');
+        if (paginationContainer) paginationContainer.classList.add('hidden');
         loadSeasonalAnime(); // Render seasonal list
       }
     }
