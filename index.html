@@ -77,12 +77,38 @@
         </div>
       </div>
 
-      <!-- Content Grid -->
-      <div id="watchlistGrid" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <!-- Watchlist Sections -->
+      <div id="watchlistSections" class="space-y-8">
+        <!-- Ready to Watch Section -->
+        <div id="readyToWatchSection" class="hidden">
+          <h3 class="text-lg font-bold mb-3 text-amber-400 flex items-center gap-2">
+            🍿 Ready to Watch
+            <span id="readyToWatchCount" class="text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2.5 py-0.5 rounded-full font-bold">0</span>
+          </h3>
+          <div id="readyToWatchGrid" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+        </div>
+
+        <!-- Watchlist Section (Caught Up) -->
+        <div id="upToDateSection">
+          <h3 id="upToDateHeader" class="text-lg font-bold mb-3 text-gray-300 flex items-center gap-2">
+            📅 Watchlist
+            <span id="upToDateCount" class="text-xs bg-gray-800 text-gray-400 border border-gray-700/60 px-2.5 py-0.5 rounded-full font-bold">0</span>
+          </h3>
+          <div id="upToDateGrid" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+        </div>
+      </div>
+
+      <!-- Watchlist Empty State -->
+      <div id="watchlistEmptyState" class="hidden text-center py-12 text-gray-500 text-sm">
+        Your watchlist is empty. Search above or browse Seasonal Shows to add anime.
+      </div>
+
+      <!-- Seasonal Grid -->
+      <div id="seasonalGrid" class="hidden grid grid-cols-1 md:grid-cols-2 gap-4">
         <!-- Javascript dynamic rendering injection target -->
       </div>
 
-      <!-- Pagination controls for watchlist -->
+      <!-- Pagination controls for watchlist (placed below sections) -->
       <div id="watchlistPagination" class="hidden flex justify-center items-center gap-4 mt-6">
         <button id="prevWatchlistPage" onclick="changeWatchlistPage(-1)" class="bg-gray-800 hover:bg-gray-700 text-white border border-gray-700/60 text-xs px-3.5 py-2 rounded-lg font-bold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
           ◀ Previous
@@ -278,92 +304,175 @@
       }
     }
 
-    function sortWatchlistByUnwatched(list) {
-      return [...list].sort((a, b) => {
-        const aApi = cachedApiDetails.find(c => c.id === a.id) || {};
-        const bApi = cachedApiDetails.find(c => c.id === b.id) || {};
+    let isFetchingMetadata = false;
 
-        // Calculate unwatched count for a
-        let aAired = aApi.episodes || 0;
-        if (aApi.nextAiringEpisode) {
-          const timeDiff = aApi.nextAiringEpisode.airingAt - Math.floor(Date.now() / 1000);
-          aAired = timeDiff > 0 ? aApi.nextAiringEpisode.episode - 1 : aApi.nextAiringEpisode.episode;
-        } else if (aApi.status === 'RELEASING') {
-          aAired = a.progress;
+    function getUnwatchedCount(localItem, apiItem) {
+      if (!apiItem || !apiItem.id) return 0;
+      let currentAiredGlobal = apiItem.episodes || 0;
+      if (apiItem.nextAiringEpisode) {
+        const timeDiff = apiItem.nextAiringEpisode.airingAt - Math.floor(Date.now() / 1000);
+        if (timeDiff > 0) {
+          currentAiredGlobal = apiItem.nextAiringEpisode.episode - 1;
+        } else {
+          currentAiredGlobal = apiItem.nextAiringEpisode.episode;
         }
-        const aUnwatched = Math.max(0, aAired - a.progress);
+      } else if (apiItem.status === 'RELEASING') {
+        currentAiredGlobal = localItem.progress; // fallback
+      }
+      return Math.max(0, currentAiredGlobal - localItem.progress);
+    }
 
-        // Calculate unwatched count for b
-        let bAired = bApi.episodes || 0;
-        if (bApi.nextAiringEpisode) {
-          const timeDiff = bApi.nextAiringEpisode.airingAt - Math.floor(Date.now() / 1000);
-          bAired = timeDiff > 0 ? bApi.nextAiringEpisode.episode - 1 : bApi.nextAiringEpisode.episode;
-        } else if (bApi.status === 'RELEASING') {
-          bAired = b.progress;
-        }
-        const bUnwatched = Math.max(0, bAired - b.progress);
+    function getReleaseTimestamp(apiItem) {
+      if (!apiItem || !apiItem.id) return 0;
+      const date = (apiItem.endDate && apiItem.endDate.year) ? apiItem.endDate : apiItem.startDate;
+      if (!date || !date.year) return 0;
+      const month = (date.month || 1) - 1;
+      const day = date.day || 1;
+      return new Date(date.year, month, day).getTime();
+    }
 
-        // Sort descending by unwatched count
+    function compareAnimeItems(a, b) {
+      const aApi = cachedApiDetails.find(c => c.id === a.id) || {};
+      const bApi = cachedApiDetails.find(c => c.id === b.id) || {};
+
+      const aUnwatched = getUnwatchedCount(a, aApi);
+      const bUnwatched = getUnwatchedCount(b, bApi);
+      const aCanWatch = aUnwatched > 0;
+      const bCanWatch = bUnwatched > 0;
+
+      // 1. Can watch status (shows we can watch first)
+      if (aCanWatch !== bCanWatch) {
+        return aCanWatch ? -1 : 1;
+      }
+
+      // If both can watch, sort by unwatched count descending
+      if (aCanWatch && bCanWatch) {
         if (aUnwatched !== bUnwatched) {
           return bUnwatched - aUnwatched;
         }
-        
-        // Alphabetical fallback
-        return a.title.localeCompare(b.title);
-      });
+      }
+
+      // 2. Upcoming countdowns ascending (soonest first)
+      const getCountdownTime = (api) => {
+        if (api.nextAiringEpisode && api.nextAiringEpisode.airingAt) {
+          const timeDiff = api.nextAiringEpisode.airingAt - Math.floor(Date.now() / 1000);
+          if (timeDiff > 0) return api.nextAiringEpisode.airingAt;
+        }
+        return Infinity;
+      };
+
+      const aCountdown = getCountdownTime(aApi);
+      const bCountdown = getCountdownTime(bApi);
+
+      if (aCountdown !== bCountdown) {
+        return aCountdown - bCountdown;
+      }
+
+      // 3. Release date timestamp descending (most recent first)
+      const aRelease = getReleaseTimestamp(aApi);
+      const bRelease = getReleaseTimestamp(bApi);
+
+      if (aRelease !== bRelease) {
+        return bRelease - aRelease;
+      }
+
+      // 4. Alphabetical fallback
+      return a.title.localeCompare(b.title);
+    }
+
+    function sortWatchlistByUnwatched(list) {
+      return [...list].sort(compareAnimeItems);
     }
 
     // Hydrate data with airing statuses & calculate gaps
     async function loadWatchlistDetails(forceRefresh = false, cacheOnly = false) {
+      const readyToWatchGrid = document.getElementById('readyToWatchGrid');
+      const upToDateGrid = document.getElementById('upToDateGrid');
+      const readyToWatchSection = document.getElementById('readyToWatchSection');
+      const upToDateSection = document.getElementById('upToDateSection');
+      const emptyState = document.getElementById('watchlistEmptyState');
+      const paginationContainer = document.getElementById('watchlistPagination');
+
       if (watchlist.length === 0) {
-        document.getElementById('watchlistGrid').innerHTML = '<p class="text-gray-500 text-sm">Your watchlist is empty.</p>';
-        const paginationContainer = document.getElementById('watchlistPagination');
+        readyToWatchSection.classList.add('hidden');
+        upToDateSection.classList.add('hidden');
+        emptyState.classList.remove('hidden');
         if (paginationContainer) paginationContainer.classList.add('hidden');
         return;
       }
 
-      // Sort entire watchlist (unwatched first)
+      emptyState.classList.add('hidden');
+
+      // Sort entire watchlist
       const sortedWatchlist = sortWatchlistByUnwatched(watchlist);
 
-      // Safeguard current page limits
-      const maxPage = Math.ceil(sortedWatchlist.length / watchlistItemsPerPage) || 1;
+      // Split into Can Watch vs Caught Up
+      const canWatchList = [];
+      const upToDateList = [];
+
+      sortedWatchlist.forEach(localItem => {
+        const apiItem = cachedApiDetails.find(c => c.id === localItem.id) || {};
+        if (getUnwatchedCount(localItem, apiItem) > 0) {
+          canWatchList.push(localItem);
+        } else {
+          upToDateList.push(localItem);
+        }
+      });
+
+      // Safeguard current page limits for upToDateList
+      const maxPage = Math.ceil(upToDateList.length / watchlistItemsPerPage) || 1;
       if (watchlistCurrentPage > maxPage) {
         watchlistCurrentPage = maxPage;
       }
 
-      // Slice for current page
+      // Slice upToDateList for current page
       const startIndex = (watchlistCurrentPage - 1) * watchlistItemsPerPage;
       const endIndex = startIndex + watchlistItemsPerPage;
-      const pageItems = sortedWatchlist.slice(startIndex, endIndex);
-      const pageIds = pageItems.map(a => a.id);
+      const paginatedUpToDateList = upToDateList.slice(startIndex, endIndex);
 
-      // Render immediately with whatever cache matches we have for page items
-      const relevantCachedDetails = cachedApiDetails.filter(cached => pageIds.includes(cached.id));
-      renderWatchlist(relevantCachedDetails, pageItems);
-
-      // Update watchlist pagination controls
-      const paginationContainer = document.getElementById('watchlistPagination');
-      if (paginationContainer) {
-        paginationContainer.classList.remove('hidden');
-        document.getElementById('watchlistPageNum').innerText = `Page ${watchlistCurrentPage} of ${maxPage}`;
-        document.getElementById('prevWatchlistPage').disabled = watchlistCurrentPage === 1;
-        document.getElementById('nextWatchlistPage').disabled = watchlistCurrentPage === maxPage;
+      // Render Can Watch shows (no pagination, always show all)
+      if (canWatchList.length > 0) {
+        readyToWatchSection.classList.remove('hidden');
+        document.getElementById('readyToWatchCount').innerText = canWatchList.length;
+        renderWatchlistSection(canWatchList, 'readyToWatchGrid');
+      } else {
+        readyToWatchSection.classList.add('hidden');
       }
 
-      if (cacheOnly) {
+      // Render Caught Up shows
+      if (upToDateList.length > 0) {
+        upToDateSection.classList.remove('hidden');
+        document.getElementById('upToDateCount').innerText = upToDateList.length;
+        renderWatchlistSection(paginatedUpToDateList, 'upToDateGrid');
+      } else {
+        upToDateSection.classList.add('hidden');
+      }
+
+      // Update pagination controls
+      if (paginationContainer) {
+        if (upToDateList.length > 0) {
+          paginationContainer.classList.remove('hidden');
+          document.getElementById('watchlistPageNum').innerText = `Page ${watchlistCurrentPage} of ${maxPage}`;
+          document.getElementById('prevWatchlistPage').disabled = watchlistCurrentPage === 1;
+          document.getElementById('nextWatchlistPage').disabled = watchlistCurrentPage === maxPage;
+        } else {
+          paginationContainer.classList.add('hidden');
+        }
+      }
+
+      if (cacheOnly || isFetchingMetadata) {
         return;
       }
 
-      // Slice for NEXT page to prefetch
-      const nextStartIndex = endIndex;
-      const nextEndIndex = nextStartIndex + watchlistItemsPerPage;
-      const nextPageItems = sortedWatchlist.slice(nextStartIndex, nextEndIndex);
+      // Pre-fetching targets calculation
+      const nextPageItems = upToDateList.slice(endIndex, endIndex + watchlistItemsPerPage);
+      const targetIds = [
+        ...canWatchList.map(a => a.id),
+        ...paginatedUpToDateList.map(a => a.id),
+        ...nextPageItems.map(a => a.id)
+      ];
 
-      // Combine current page and next page IDs
-      const targetItems = [...pageItems, ...nextPageItems];
-      const targetIds = targetItems.map(a => a.id);
-
-      // Compute which shows need to be fetched in the background (from current and next pages)
+      // Compute which shows need to be fetched in the background
       let idsToFetch = targetIds;
       if (!forceRefresh) {
         idsToFetch = targetIds.filter(id => {
@@ -382,7 +491,6 @@
         });
       }
 
-      // If nothing needs to be fetched, we are already rendered!
       if (idsToFetch.length === 0) {
         return;
       }
@@ -401,11 +509,14 @@
               episodes
               coverImage { large }
               nextAiringEpisode { airingAt episode }
+              startDate { year month day }
+              endDate { year month day }
             }
           }
         }`;
 
       try {
+        isFetchingMetadata = true;
         const data = await fetchAniList(query, { ids: idsToFetch }, watchlistAbortController.signal);
         if (data && data.Page && data.Page.media) {
           const newMedia = data.Page.media;
@@ -425,21 +536,25 @@
 
           // If the user has not switched away from the watchlist tab, re-render to apply the loaded details
           if (currentTab === 'watchlist') {
-            const freshDetails = cachedApiDetails.filter(cached => pageIds.includes(cached.id));
-            renderWatchlist(freshDetails, pageItems);
+            loadWatchlistDetails(false, true);
           }
         }
       } catch (err) {
-        console.error("Failed to fetch updated metadata from AniList:", err);
+        if (err.name !== 'AbortError') {
+          console.error("Failed to fetch updated metadata from AniList:", err);
+        }
+      } finally {
+        isFetchingMetadata = false;
       }
     }
 
-    function renderWatchlist(apiDetails, pageItems) {
-      const container = document.getElementById('watchlistGrid');
+    function renderWatchlistSection(pageItems, containerId) {
+      const container = document.getElementById(containerId);
+      if (!container) return;
       container.innerHTML = '';
 
       pageItems.forEach(localItem => {
-        const apiItem = apiDetails.find(a => a.id === localItem.id) || {};
+        const apiItem = cachedApiDetails.find(a => a.id === localItem.id) || {};
         const isNewLoading = !apiItem.id;
 
         const coverHtml = apiItem.coverImage?.large
@@ -448,15 +563,21 @@
 
         // Calculate total episodes available globally right now
         let currentAiredGlobal = apiItem.episodes || 0;
-        let countdownText = "";
+        let countdownHtml = "";
 
         if (apiItem.nextAiringEpisode) {
           const timeDiff = apiItem.nextAiringEpisode.airingAt - Math.floor(Date.now() / 1000);
           if (timeDiff > 0) {
             currentAiredGlobal = apiItem.nextAiringEpisode.episode - 1;
-            const days = Math.floor(timeDiff / (3600 * 24));
-            const hours = Math.floor((timeDiff % (3600 * 24)) / 3600);
-            countdownText = `Ep ${apiItem.nextAiringEpisode.episode} in ${days}d ${hours}h`;
+            const formatted = formatCountdownText(apiItem.nextAiringEpisode.airingAt, apiItem.nextAiringEpisode.episode);
+            countdownHtml = `
+              <span class="countdown-ticker text-xs text-indigo-400 font-medium bg-indigo-950/40 px-2 py-0.5 rounded"
+                    data-airing-at="${apiItem.nextAiringEpisode.airingAt}"
+                    data-episode="${apiItem.nextAiringEpisode.episode}"
+                    data-anime-id="${localItem.id}">
+                ${formatted}
+              </span>
+            `;
           } else {
             currentAiredGlobal = apiItem.nextAiringEpisode.episode;
           }
@@ -472,7 +593,7 @@
 
         let badgeAreaHtml = `
           ${canWatchBadge}
-          ${countdownText ? `<span class="text-xs text-indigo-400 font-medium bg-indigo-950/40 px-2 py-0.5 rounded">${countdownText}</span>` : ''}
+          ${countdownHtml}
         `;
 
         if (isNewLoading) {
@@ -519,8 +640,13 @@
     }
 
     function changeWatchlistPage(dir) {
-      const sortedWatchlist = sortWatchlistByUnwatched(watchlist);
-      const maxPage = Math.ceil(sortedWatchlist.length / watchlistItemsPerPage) || 1;
+      // Calculate upToDateList size
+      const upToDateList = watchlist.filter(localItem => {
+        const apiItem = cachedApiDetails.find(c => c.id === localItem.id) || {};
+        return getUnwatchedCount(localItem, apiItem) === 0;
+      });
+
+      const maxPage = Math.ceil(upToDateList.length / watchlistItemsPerPage) || 1;
       watchlistCurrentPage += dir;
       if (watchlistCurrentPage < 1) watchlistCurrentPage = 1;
       if (watchlistCurrentPage > maxPage) watchlistCurrentPage = maxPage;
@@ -562,6 +688,9 @@
       const tabWatchlist = document.getElementById('tabWatchlist');
       const tabSeasonal = document.getElementById('tabSeasonal');
       const seasonSelectContainer = document.getElementById('seasonSelectContainer');
+      const watchlistSections = document.getElementById('watchlistSections');
+      const seasonalGrid = document.getElementById('seasonalGrid');
+      const paginationContainer = document.getElementById('watchlistPagination');
       
       if (tab === 'watchlist') {
         if (seasonalAbortController) {
@@ -571,6 +700,9 @@
         tabWatchlist.className = "px-4 py-2 text-xs md:text-sm font-bold rounded-lg transition-all bg-indigo-600 text-white cursor-pointer";
         tabSeasonal.className = "px-4 py-2 text-xs md:text-sm font-bold rounded-lg transition-all text-gray-400 hover:text-white cursor-pointer";
         seasonSelectContainer.classList.add('hidden');
+        
+        watchlistSections.classList.remove('hidden');
+        seasonalGrid.classList.add('hidden');
         loadWatchlistDetails(); // Render watchlist
       } else {
         if (watchlistAbortController) {
@@ -580,7 +712,9 @@
         tabWatchlist.className = "px-4 py-2 text-xs md:text-sm font-bold rounded-lg transition-all text-gray-400 hover:text-white cursor-pointer";
         tabSeasonal.className = "px-4 py-2 text-xs md:text-sm font-bold rounded-lg transition-all bg-indigo-600 text-white cursor-pointer";
         seasonSelectContainer.classList.remove('hidden');
-        const paginationContainer = document.getElementById('watchlistPagination');
+        
+        watchlistSections.classList.add('hidden');
+        seasonalGrid.classList.remove('hidden');
         if (paginationContainer) paginationContainer.classList.add('hidden');
         loadSeasonalAnime(); // Render seasonal list
       }
@@ -641,7 +775,7 @@
     }
 
     async function loadSeasonalAnime() {
-      const container = document.getElementById('watchlistGrid');
+      const container = document.getElementById('seasonalGrid');
       if (!container) return;
       
       container.innerHTML = '<p class="text-gray-400 text-sm py-4 col-span-2">Loading seasonal shows...</p>';
@@ -680,7 +814,8 @@
     }
 
     function renderSeasonalList(mediaList) {
-      const container = document.getElementById('watchlistGrid');
+      const container = document.getElementById('seasonalGrid');
+      if (!container) return;
       container.innerHTML = '';
       
       if (mediaList.length === 0) {
@@ -751,11 +886,64 @@
       loadSeasonalAnime();
     }
 
+    function formatCountdownText(airingAt, episode) {
+      const timeNow = Math.floor(Date.now() / 1000);
+      const timeDiff = airingAt - timeNow;
+      if (timeDiff <= 0) {
+        return "Aired recently";
+      }
+
+      const days = Math.floor(timeDiff / (3600 * 24));
+      const hours = Math.floor((timeDiff % (3600 * 24)) / 3600);
+      const minutes = Math.floor((timeDiff % 3600) / 60);
+      const seconds = timeDiff % 60;
+
+      if (days > 0) {
+        return `Ep ${episode} in ${days}d ${hours}h ${minutes}m`;
+      } else {
+        return `Ep ${episode} in ${hours}h ${minutes}m ${seconds}s`;
+      }
+    }
+
+    function startCountdownTicker() {
+      setInterval(() => {
+        const tickers = document.querySelectorAll('.countdown-ticker');
+        let needsRefresh = false;
+
+        tickers.forEach(el => {
+          const airingAt = parseInt(el.getAttribute('data-airing-at'), 10);
+          const episode = parseInt(el.getAttribute('data-episode'), 10);
+
+          if (isNaN(airingAt) || isNaN(episode)) return;
+
+          const newText = formatCountdownText(airingAt, episode);
+          if (el.innerText !== newText) {
+            el.innerText = newText;
+          }
+
+          if (airingAt <= Math.floor(Date.now() / 1000)) {
+            if (!el.dataset.expired) {
+              el.dataset.expired = "true";
+              needsRefresh = true;
+            }
+          }
+        });
+
+        if (needsRefresh) {
+          console.log("Countdown reached 0. Refreshing metadata...");
+          loadWatchlistDetails(true);
+        }
+      }, 1000);
+    }
+
     // Initialize the season selection dropdown list
     initSeasonSelector();
 
     // Initial Dashboard execution on structural load
     loadWatchlistDetails();
+
+    // Start live countdown tickers
+    startCountdownTicker();
   </script>
   <script src="supabase.js"></script>
 </body>
