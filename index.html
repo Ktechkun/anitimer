@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Lightweight Anime Watch Tracker</title>
   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="https://apis.google.com/js/api.js" async defer></script>
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen font-sans">
 
@@ -15,6 +17,9 @@
         <h1 class="text-3xl font-extrabold text-indigo-400">AniStream Tracker</h1>
         <p class="text-sm text-gray-400">Track progress & live countdowns</p>
       </div>
+      <button id="syncDriveBtn" onclick="handleAuthClick()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs px-4 py-2 rounded-lg font-bold transition-all flex items-center gap-2">
+        🔄 Connect Google Drive
+      </button>
       <div class="text-xs bg-gray-800 text-gray-400 px-3 py-1.5 rounded border border-gray-700">
         Storage: LocalStorage (Drive Sync Ready)
       </div>
@@ -216,5 +221,6 @@
     // Initial Dashboard execution on structural load
     loadWatchlistDetails();
   </script>
+  <script src="drive.js"></script>
 </body>
 </html>
