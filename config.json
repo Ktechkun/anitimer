@@ -1,5 +1,4 @@
 {
-  "clientId": "109313795001-rrs5loo9edglps6f1guqgeid0n95s58h.apps.googleusercontent.com",
-  "apiKey": "AIzaSyC6Aq1d1MA5n_7kpiShetr4ngvAcr9GK6A",
-  "scopes": "https://www.googleapis.com/auth/drive.appdata"
+  "supabaseUrl": "https://fhbrgxprjfkyujsjhdko.supabase.co",
+  "supabasePublishableKey": "sb_publishable_4JBPOiim_to_QizsCvlS5w_q1bCQE0J"
 }

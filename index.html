@@ -6,8 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Lightweight Anime Watch Tracker</title>
   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script src="https://apis.google.com/js/api.js" async defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     @keyframes shimmer {
       0% {
@@ -37,30 +36,26 @@
       <div class="flex items-center gap-3">
         <span id="syncStatus"
           class="text-xs bg-gray-800 text-gray-500 px-3 py-1.5 rounded border border-gray-700/60 font-medium">
-          ☁️ Drive Sync: Not Connected
+          ☁️ Supabase: Loading...
         </span>
+        <span id="userDisplay" class="hidden text-xs text-gray-400 bg-gray-850 px-3 py-1.5 rounded border border-gray-700/60 font-medium"></span>
+        <button id="headerAuthBtn" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-3 py-1.5 rounded-lg font-bold cursor-pointer transition-all">
+          🔑 Sign In
+        </button>
       </div>
     </header>
 
-    <!-- Cloud Sync Banner Promotion -->
-    <div id="syncPromptBanner"
-      class="hidden bg-indigo-950/60 border border-indigo-500/30 text-indigo-200 px-4 py-3 rounded-xl mb-6 flex justify-between items-center gap-4 transition-all">
-      <div class="flex items-center gap-2.5">
-        <span class="text-lg">☁️</span>
-        <div class="text-xs md:text-sm">
-          <strong class="text-indigo-400 font-bold">Cloud Sync:</strong> Connect Google Drive to back up progress and
-          sync across devices.
+    <!-- Supabase Auth Card -->
+    <div id="authContainer" class="hidden bg-gray-800/80 border border-gray-700/60 p-5 rounded-2xl mb-8 max-w-md mx-auto transition-all">
+      <h3 class="text-sm font-bold text-gray-200 mb-3 text-center uppercase tracking-wider">Cloud Sync Credentials</h3>
+      <div class="flex flex-col gap-3">
+        <input id="authEmail" type="email" placeholder="Email Address" class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+        <input id="authPassword" type="password" placeholder="Password" class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+        <div id="authError" class="hidden text-xs text-red-400 bg-red-950/40 border border-red-500/20 px-3 py-2 rounded-lg font-medium"></div>
+        <div class="flex gap-2 mt-2">
+          <button onclick="handleEmailLogin(document.getElementById('authEmail').value, document.getElementById('authPassword').value)" class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs py-2.5 rounded-lg font-bold cursor-pointer transition-all">Log In</button>
+          <button onclick="handleEmailSignup(document.getElementById('authEmail').value, document.getElementById('authPassword').value)" class="flex-1 bg-gray-700 hover:bg-gray-600 text-white text-xs py-2.5 rounded-lg font-bold cursor-pointer transition-all">Sign Up</button>
         </div>
-      </div>
-      <div class="flex items-center gap-2 shrink-0">
-        <button onclick="acceptSyncPrompt()"
-          class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-3 py-1.5 rounded-lg font-bold transition-all">
-          Connect
-        </button>
-        <button onclick="dismissSyncPrompt()"
-          class="text-indigo-400 hover:text-indigo-300 text-xs px-2 py-1.5 rounded-lg font-medium transition-all">
-          Close
-        </button>
       </div>
     </div>
 
@@ -272,19 +267,8 @@
       if (currentTab === 'watchlist') {
         loadWatchlistDetails(forceRefresh, cacheOnly);
       }
-      if (typeof handleAuthClick === 'function') {
-        if (window.accessToken) {
-          // Change status to indicate saving/syncing
-          const statusEl = document.getElementById('syncStatus');
-          if (statusEl) {
-            statusEl.innerText = "⏳ Drive Sync: Saving...";
-            statusEl.className = "text-xs bg-amber-950 text-amber-400 border border-amber-500/30 px-3 py-1.5 rounded font-semibold";
-          }
-          syncDataToDrive();
-        } else {
-          // Trigger sign in flow if not authenticated yet
-          handleAuthClick();
-        }
+      if (typeof syncDataToSupabase === 'function') {
+        syncDataToSupabase();
       }
     }
 
@@ -681,7 +665,7 @@
     // Initial Dashboard execution on structural load
     loadWatchlistDetails();
   </script>
-  <script src="drive.js"></script>
+  <script src="supabase.js"></script>
 </body>
 
 </html>
