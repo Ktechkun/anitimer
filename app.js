@@ -619,7 +619,7 @@ function getSeasonList() {
   let currentSeasonIndex = seasons.indexOf(current.season);
   let currentYear = current.year;
   
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 40; i++) {
     list.push({
       season: seasons[currentSeasonIndex],
       year: currentYear,
