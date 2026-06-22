@@ -17,11 +17,13 @@
         <h1 class="text-3xl font-extrabold text-indigo-400">AniStream Tracker</h1>
         <p class="text-sm text-gray-400">Track progress & live countdowns</p>
       </div>
-      <button id="syncDriveBtn" onclick="handleAuthClick()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs px-4 py-2 rounded-lg font-bold transition-all flex items-center gap-2">
-        🔄 Connect Google Drive
-      </button>
-      <div class="text-xs bg-gray-800 text-gray-400 px-3 py-1.5 rounded border border-gray-700">
-        Storage: LocalStorage (Drive Sync Ready)
+      <div class="flex items-center gap-3">
+        <button id="syncDriveBtn" onclick="handleAuthClick()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs px-4 py-2 rounded-lg font-bold transition-all flex items-center gap-2">
+          🔄 Connect Google Drive
+        </button>
+        <div class="text-xs bg-gray-800 text-gray-400 px-3 py-1.5 rounded border border-gray-700">
+          Storage: LocalStorage (Drive Sync Ready)
+        </div>
       </div>
     </header>
 
@@ -47,6 +49,7 @@
   <script>
     // State Management
     let watchlist = JSON.parse(localStorage.getItem('anime_watchlist')) || [];
+    let cachedApiDetails = [];
 
     // Base API call to AniList GraphQL
     async function fetchAniList(query, variables = {}) {
@@ -111,7 +114,7 @@
     function addToWatchlist(id, title) {
       if (watchlist.some(item => item.id === id)) return alert("Already added!");
       watchlist.push({ id, title, progress: 0 });
-      saveAndRefresh();
+      saveAndRefresh(true);
       document.getElementById('searchResults').innerHTML = '';
       document.getElementById('searchInput').value = '';
     }
@@ -129,19 +132,41 @@
       saveAndRefresh();
     }
 
-    function saveAndRefresh() {
+    function saveAndRefresh(forceRefresh = false) {
       localStorage.setItem('anime_watchlist', JSON.stringify(watchlist));
-      loadWatchlistDetails();
+      loadWatchlistDetails(forceRefresh);
+      if (typeof handleAuthClick === 'function') {
+        if (window.accessToken) {
+          // Change button to indicate saving/syncing
+          const btn = document.getElementById('syncDriveBtn');
+          if (btn) {
+            btn.innerText = "⏳ Saving...";
+            btn.className = "bg-amber-950 text-amber-400 border border-amber-500/30 text-xs px-4 py-2 rounded-lg font-bold";
+          }
+          syncDataToDrive();
+        } else {
+          // Trigger sign in flow if not authenticated yet
+          handleAuthClick();
+        }
+      }
     }
 
     // Hydrate data with airing statuses & calculate gaps
-    async function loadWatchlistDetails() {
+    async function loadWatchlistDetails(forceRefresh = false) {
       if (watchlist.length === 0) {
         document.getElementById('watchlistGrid').innerHTML = '<p class="text-gray-500 text-sm">Your watchlist is empty.</p>';
         return;
       }
 
       const ids = watchlist.map(a => a.id);
+      
+      // Re-render from cache if not forcing a refresh and we already have details for all items
+      if (!forceRefresh && cachedApiDetails.length > 0 && ids.every(id => cachedApiDetails.some(cached => cached.id === id))) {
+        const relevantDetails = cachedApiDetails.filter(cached => ids.includes(cached.id));
+        renderWatchlist(relevantDetails);
+        return;
+      }
+
       const query = `
         query ($ids: [Int]) {
           Page {
@@ -156,7 +181,10 @@
         }`;
 
       const data = await fetchAniList(query, { ids });
-      renderWatchlist(data.Page.media);
+      if (data && data.Page && data.Page.media) {
+        cachedApiDetails = data.Page.media;
+        renderWatchlist(cachedApiDetails);
+      }
     }
 
     function renderWatchlist(apiDetails) {
