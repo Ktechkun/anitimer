@@ -146,6 +146,36 @@
       }
     }
 
+    function updateProgressDirect(id, element) {
+      let val = parseInt(element.innerText.trim(), 10);
+      if (isNaN(val) || val < 0) {
+        val = 0;
+      }
+      
+      const item = watchlist.find(a => a.id === id);
+      if (item) {
+        // Cap progress at total episodes if known
+        const apiItem = (cachedApiDetails && cachedApiDetails.find(a => a.id === id)) || {};
+        if (apiItem.episodes && val > apiItem.episodes) {
+          val = apiItem.episodes;
+        }
+        
+        if (item.progress !== val) {
+          item.progress = val;
+          saveAndRefresh();
+        } else {
+          element.innerText = val;
+        }
+      }
+    }
+
+    function checkProgressKey(event, element) {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        element.blur();
+      }
+    }
+
     function deleteAnime(id) {
       watchlist = watchlist.filter(item => item.id !== id);
       saveAndRefresh();
@@ -242,7 +272,7 @@
 
             <div class="flex items-center justify-between border-t border-gray-700/60 pt-2 mt-2">
               <span class="text-sm font-medium text-gray-300">
-                My Progress: <strong class="text-indigo-400 text-base">${localItem.progress}</strong> / ${apiItem.episodes || '?'}
+                My Progress: <strong contenteditable="true" inputmode="numeric" class="text-indigo-400 text-base focus:bg-gray-700/60 focus:outline-none px-1 py-0.5 rounded cursor-text select-all transition-all" onblur="updateProgressDirect(${localItem.id}, this)" onkeydown="checkProgressKey(event, this)">${localItem.progress}</strong> / ${apiItem.episodes || '?'}
               </span>
               <button onclick="incrementProgress(${localItem.id})" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1 transition-all">
                 +1 Ep
