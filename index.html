@@ -68,7 +68,7 @@
   <script>
     // State Management
     let watchlist = JSON.parse(localStorage.getItem('anime_watchlist')) || [];
-    let cachedApiDetails = [];
+    let cachedApiDetails = JSON.parse(localStorage.getItem('anime_metadata_cache')) || [];
 
     // Base API call to AniList GraphQL
     async function fetchAniList(query, variables = {}) {
@@ -133,7 +133,7 @@
     function addToWatchlist(id, title) {
       if (watchlist.some(item => item.id === id)) return alert("Already added!");
       watchlist.push({ id, title, progress: 0 });
-      saveAndRefresh(true);
+      saveAndRefresh(true, false);
       document.getElementById('searchResults').innerHTML = '';
       document.getElementById('searchInput').value = '';
     }
@@ -141,8 +141,26 @@
     function incrementProgress(id) {
       const item = watchlist.find(a => a.id === id);
       if (item) {
+        const apiItem = (cachedApiDetails && cachedApiDetails.find(a => a.id === id)) || {};
+        
+        let limit = null;
+        let limitMessage = "";
+        
+        if (apiItem.nextAiringEpisode) {
+          const timeDiff = apiItem.nextAiringEpisode.airingAt - Math.floor(Date.now() / 1000);
+          limit = timeDiff > 0 ? apiItem.nextAiringEpisode.episode - 1 : apiItem.nextAiringEpisode.episode;
+          limitMessage = `cannot exceed the number of episodes aired so far (${limit})`;
+        } else if (apiItem.episodes) {
+          limit = apiItem.episodes;
+          limitMessage = `cannot exceed the total episode count of ${limit}`;
+        }
+        
+        if (limit !== null && item.progress >= limit) {
+          alert(`Already completed! Progress ${limitMessage}.`);
+          return;
+        }
         item.progress++;
-        saveAndRefresh();
+        saveAndRefresh(false, true);
       }
     }
 
@@ -154,15 +172,28 @@
       
       const item = watchlist.find(a => a.id === id);
       if (item) {
-        // Cap progress at total episodes if known
         const apiItem = (cachedApiDetails && cachedApiDetails.find(a => a.id === id)) || {};
-        if (apiItem.episodes && val > apiItem.episodes) {
-          val = apiItem.episodes;
+        
+        let limit = null;
+        let limitMessage = "";
+        
+        if (apiItem.nextAiringEpisode) {
+          const timeDiff = apiItem.nextAiringEpisode.airingAt - Math.floor(Date.now() / 1000);
+          limit = timeDiff > 0 ? apiItem.nextAiringEpisode.episode - 1 : apiItem.nextAiringEpisode.episode;
+          limitMessage = `cannot exceed the number of episodes aired so far (${limit})`;
+        } else if (apiItem.episodes) {
+          limit = apiItem.episodes;
+          limitMessage = `cannot exceed the total episode count of ${limit}`;
+        }
+        
+        if (limit !== null && val > limit) {
+          alert(`Progress capped! It ${limitMessage}.`);
+          val = limit;
         }
         
         if (item.progress !== val) {
           item.progress = val;
-          saveAndRefresh();
+          saveAndRefresh(false, true);
         } else {
           element.innerText = val;
         }
@@ -178,12 +209,12 @@
 
     function deleteAnime(id) {
       watchlist = watchlist.filter(item => item.id !== id);
-      saveAndRefresh();
+      saveAndRefresh(false, true);
     }
 
-    function saveAndRefresh() {
+    function saveAndRefresh(forceRefresh = false, cacheOnly = false) {
       localStorage.setItem('anime_watchlist', JSON.stringify(watchlist));
-      loadWatchlistDetails();
+      loadWatchlistDetails(forceRefresh, cacheOnly);
       if (typeof handleAuthClick === 'function') {
         if (window.accessToken) {
           // Change status to indicate saving/syncing
@@ -201,13 +232,40 @@
     }
 
     // Hydrate data with airing statuses & calculate gaps
-    async function loadWatchlistDetails() {
+    async function loadWatchlistDetails(forceRefresh = false, cacheOnly = false) {
       if (watchlist.length === 0) {
         document.getElementById('watchlistGrid').innerHTML = '<p class="text-gray-500 text-sm">Your watchlist is empty.</p>';
         return;
       }
 
       const ids = watchlist.map(a => a.id);
+
+      // If cacheOnly is true, we render immediately from cache
+      if (cacheOnly && cachedApiDetails.length > 0) {
+        const relevantDetails = cachedApiDetails.filter(cached => ids.includes(cached.id));
+        renderWatchlist(relevantDetails);
+        return;
+      }
+
+      // If forcing a refresh, we fetch everything
+      let idsToFetch = ids;
+      
+      if (!forceRefresh) {
+        // Only fetch shows that are NOT cached OR are cached but NOT finished (ongoing/releasing/not yet released)
+        idsToFetch = ids.filter(id => {
+          const cached = cachedApiDetails.find(c => c.id === id);
+          if (!cached) return true;
+          return cached.status !== 'FINISHED';
+        });
+      }
+
+      // If nothing needs to be fetched, render immediately from cache!
+      if (idsToFetch.length === 0) {
+        const relevantDetails = cachedApiDetails.filter(cached => ids.includes(cached.id));
+        renderWatchlist(relevantDetails);
+        return;
+      }
+
       const query = `
         query ($ids: [Int]) {
           Page {
@@ -221,8 +279,31 @@
           }
         }`;
 
-      const data = await fetchAniList(query, { ids });
-      renderWatchlist(data.Page.media);
+      try {
+        const data = await fetchAniList(query, { ids: idsToFetch });
+        if (data && data.Page && data.Page.media) {
+          const newMedia = data.Page.media;
+          
+          // Merge new media details into the cache
+          newMedia.forEach(item => {
+            const index = cachedApiDetails.findIndex(c => c.id === item.id);
+            if (index > -1) {
+              cachedApiDetails[index] = item;
+            } else {
+              cachedApiDetails.push(item);
+            }
+          });
+          
+          // Persist the updated cache in localStorage
+          localStorage.setItem('anime_metadata_cache', JSON.stringify(cachedApiDetails));
+        }
+      } catch (err) {
+        console.error("Failed to fetch updated metadata from AniList:", err);
+      }
+
+      // Render the current watchlist using all details present in the cache
+      const relevantDetails = cachedApiDetails.filter(cached => ids.includes(cached.id));
+      renderWatchlist(relevantDetails);
     }
 
     function renderWatchlist(apiDetails) {
@@ -237,12 +318,14 @@
         let countdownText = "";
 
         if (apiItem.nextAiringEpisode) {
-          currentAiredGlobal = apiItem.nextAiringEpisode.episode - 1;
           const timeDiff = apiItem.nextAiringEpisode.airingAt - Math.floor(Date.now() / 1000);
           if (timeDiff > 0) {
+            currentAiredGlobal = apiItem.nextAiringEpisode.episode - 1;
             const days = Math.floor(timeDiff / (3600 * 24));
             const hours = Math.floor((timeDiff % (3600 * 24)) / 3600);
             countdownText = `Ep ${apiItem.nextAiringEpisode.episode} in ${days}d ${hours}h`;
+          } else {
+            currentAiredGlobal = apiItem.nextAiringEpisode.episode;
           }
         } else if (apiItem.status === 'RELEASING') {
           currentAiredGlobal = localItem.progress; // fallback if dynamic air data missing
@@ -253,6 +336,12 @@
         const canWatchBadge = unwatchedCount > 0
           ? `<span class="bg-amber-500/20 text-amber-400 border border-amber-500/30 text-xs px-2 py-0.5 rounded-full font-bold animate-pulse">${unwatchedCount} Can Watch</span>`
           : `<span class="bg-gray-800 text-gray-500 text-xs px-2 py-0.5 rounded-full">Caught Up</span>`;
+
+        const isCaughtUp = localItem.progress >= currentAiredGlobal;
+        const buttonDisabledAttr = isCaughtUp ? "disabled" : "";
+        const buttonClass = isCaughtUp
+          ? "bg-gray-800/40 text-gray-600 border border-gray-700/50 text-xs px-3 py-1.5 rounded-lg font-medium cursor-not-allowed transition-all"
+          : "bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1 transition-all";
 
         const card = document.createElement('div');
         card.className = "bg-gray-800 p-4 rounded-xl border border-gray-700 flex gap-4 relative overflow-hidden";
@@ -274,7 +363,7 @@
               <span class="text-sm font-medium text-gray-300">
                 My Progress: <strong contenteditable="true" inputmode="numeric" class="text-indigo-400 text-base focus:bg-gray-700/60 focus:outline-none px-1 py-0.5 rounded cursor-text select-all transition-all" onblur="updateProgressDirect(${localItem.id}, this)" onkeydown="checkProgressKey(event, this)">${localItem.progress}</strong> / ${apiItem.episodes || '?'}
               </span>
-              <button onclick="incrementProgress(${localItem.id})" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1 transition-all">
+              <button onclick="incrementProgress(${localItem.id})" ${buttonDisabledAttr} class="${buttonClass}">
                 +1 Ep
               </button>
             </div>
