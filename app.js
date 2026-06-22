@@ -8,6 +8,24 @@ let watchlistCurrentPage = 1;
 const watchlistItemsPerPage = 6;
 let isFetchingMetadata = false;
 
+// Expose states to window context via getters/setters to support external script modules
+Object.defineProperty(window, 'watchlist', {
+  get: () => watchlist,
+  set: (val) => { watchlist = val; },
+  configurable: true
+});
+Object.defineProperty(window, 'cachedApiDetails', {
+  get: () => cachedApiDetails,
+  set: (val) => { cachedApiDetails = val; },
+  configurable: true
+});
+Object.defineProperty(window, 'watchlistCurrentPage', {
+  get: () => watchlistCurrentPage,
+  set: (val) => { watchlistCurrentPage = val; },
+  configurable: true
+});
+
+
 // Base API call to AniList GraphQL
 async function fetchAniList(query, variables = {}, signal = null) {
   try {
@@ -171,13 +189,13 @@ function deleteAnime(id) {
   saveAndRefresh(false, true);
 }
 
-function saveAndRefresh(forceRefresh = false, cacheOnly = false) {
+async function saveAndRefresh(forceRefresh = false, cacheOnly = false) {
   localStorage.setItem('anime_watchlist', JSON.stringify(watchlist));
+  if (typeof syncDataToSupabase === 'function') {
+    await syncDataToSupabase();
+  }
   if (currentTab === 'watchlist') {
     loadWatchlistDetails(forceRefresh, cacheOnly);
-  }
-  if (typeof syncDataToSupabase === 'function') {
-    syncDataToSupabase();
   }
 }
 
@@ -268,42 +286,124 @@ async function loadWatchlistDetails(forceRefresh = false, cacheOnly = false) {
   const emptyState = document.getElementById('watchlistEmptyState');
   const paginationContainer = document.getElementById('watchlistPagination');
 
-  if (watchlist.length === 0) {
-    readyToWatchSection.classList.add('hidden');
-    upToDateSection.classList.add('hidden');
-    emptyState.classList.remove('hidden');
-    if (paginationContainer) paginationContainer.classList.add('hidden');
-    return;
-  }
+  // We define containers to hold the items that will be rendered
+  let canWatchList = [];
+  let paginatedUpToDateList = [];
+  let maxPage = 1;
+  let upToDateListCount = 0;
 
-  emptyState.classList.add('hidden');
+  // Render logic partitions based on auth state
+  if (window.supabaseClient && window.currentUser) {
+    try {
+      // 1. Fetch Can Watch items (all)
+      const { data: canWatchDb, error: err1 } = await window.supabaseClient
+        .from('watchlist')
+        .select('anime_id, title, progress, status, next_airing_at, last_released_at')
+        .eq('status', 'can_watch');
+      
+      if (err1) throw err1;
+      canWatchList = (canWatchDb || []).map(item => ({
+        id: item.anime_id,
+        title: item.title,
+        progress: item.progress,
+        status: item.status,
+        next_airing_at: item.next_airing_at,
+        last_released_at: item.last_released_at
+      }));
 
-  // Sort entire watchlist
-  const sortedWatchlist = sortWatchlistByUnwatched(watchlist);
+      // 2. Fetch total count of Caught Up items
+      const { count: caughtUpCount, error: err2 } = await window.supabaseClient
+        .from('watchlist')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'caught_up');
 
-  // Split into Can Watch vs Caught Up
-  const canWatchList = [];
-  const upToDateList = [];
+      if (err2) throw err2;
+      upToDateListCount = caughtUpCount || 0;
+      maxPage = Math.ceil(upToDateListCount / watchlistItemsPerPage) || 1;
 
-  sortedWatchlist.forEach(localItem => {
-    const apiItem = cachedApiDetails.find(c => c.id === localItem.id) || {};
-    if (getUnwatchedCount(localItem, apiItem) > 0) {
-      canWatchList.push(localItem);
-    } else {
-      upToDateList.push(localItem);
+      if (watchlistCurrentPage > maxPage) {
+        watchlistCurrentPage = maxPage;
+      }
+
+      // 3. Fetch paginated Caught Up items
+      const startIndex = (watchlistCurrentPage - 1) * watchlistItemsPerPage;
+      const endIndex = startIndex + watchlistItemsPerPage - 1;
+
+      const { data: upToDateDb, error: err3 } = await window.supabaseClient
+        .from('watchlist')
+        .select('anime_id, title, progress, status, next_airing_at, last_released_at')
+        .eq('status', 'caught_up')
+        .order('next_airing_at', { ascending: true, nullsFirst: false })
+        .order('last_released_at', { ascending: false })
+        .order('title', { ascending: true })
+        .range(startIndex, endIndex);
+
+      if (err3) throw err3;
+      paginatedUpToDateList = (upToDateDb || []).map(item => ({
+        id: item.anime_id,
+        title: item.title,
+        progress: item.progress,
+        status: item.status,
+        next_airing_at: item.next_airing_at,
+        last_released_at: item.last_released_at
+      }));
+
+      // We check the combined counts to see if the watchlist is empty overall
+      const totalCount = canWatchList.length + upToDateListCount;
+      if (totalCount === 0) {
+        readyToWatchSection.classList.add('hidden');
+        upToDateSection.classList.add('hidden');
+        emptyState.classList.remove('hidden');
+        if (paginationContainer) paginationContainer.classList.add('hidden');
+        return;
+      }
+      emptyState.classList.add('hidden');
+
+    } catch (dbErr) {
+      console.error("Supabase paginated query failed, falling back to local storage:", dbErr);
+      runLocalPartition();
     }
-  });
-
-  // Safeguard current page limits for upToDateList
-  const maxPage = Math.ceil(upToDateList.length / watchlistItemsPerPage) || 1;
-  if (watchlistCurrentPage > maxPage) {
-    watchlistCurrentPage = maxPage;
+  } else {
+    runLocalPartition();
   }
 
-  // Slice upToDateList for current page
-  const startIndex = (watchlistCurrentPage - 1) * watchlistItemsPerPage;
-  const endIndex = startIndex + watchlistItemsPerPage;
-  const paginatedUpToDateList = upToDateList.slice(startIndex, endIndex);
+  function runLocalPartition() {
+    if (watchlist.length === 0) {
+      readyToWatchSection.classList.add('hidden');
+      upToDateSection.classList.add('hidden');
+      emptyState.classList.remove('hidden');
+      if (paginationContainer) paginationContainer.classList.add('hidden');
+      return;
+    }
+    emptyState.classList.add('hidden');
+
+    // Sort entire watchlist
+    const sortedWatchlist = sortWatchlistByUnwatched(watchlist);
+
+    // Split into Can Watch vs Caught Up
+    const fullCanWatchList = [];
+    const fullUpToDateList = [];
+
+    sortedWatchlist.forEach(localItem => {
+      const apiItem = cachedApiDetails.find(c => c.id === localItem.id) || {};
+      if (getUnwatchedCount(localItem, apiItem) > 0) {
+        fullCanWatchList.push(localItem);
+      } else {
+        fullUpToDateList.push(localItem);
+      }
+    });
+
+    canWatchList = fullCanWatchList;
+    upToDateListCount = fullUpToDateList.length;
+    maxPage = Math.ceil(upToDateListCount / watchlistItemsPerPage) || 1;
+    if (watchlistCurrentPage > maxPage) {
+      watchlistCurrentPage = maxPage;
+    }
+
+    const startIndex = (watchlistCurrentPage - 1) * watchlistItemsPerPage;
+    const endIndex = startIndex + watchlistItemsPerPage;
+    paginatedUpToDateList = fullUpToDateList.slice(startIndex, endIndex);
+  }
 
   // Render Can Watch shows (no pagination, always show all)
   if (canWatchList.length > 0) {
@@ -315,9 +415,9 @@ async function loadWatchlistDetails(forceRefresh = false, cacheOnly = false) {
   }
 
   // Render Caught Up shows
-  if (upToDateList.length > 0) {
+  if (paginatedUpToDateList.length > 0) {
     upToDateSection.classList.remove('hidden');
-    document.getElementById('upToDateCount').innerText = upToDateList.length;
+    document.getElementById('upToDateCount').innerText = upToDateListCount;
     renderWatchlistSection(paginatedUpToDateList, 'upToDateGrid');
   } else {
     upToDateSection.classList.add('hidden');
@@ -325,7 +425,7 @@ async function loadWatchlistDetails(forceRefresh = false, cacheOnly = false) {
 
   // Update pagination controls
   if (paginationContainer) {
-    if (upToDateList.length > 0) {
+    if (upToDateListCount > 0) {
       paginationContainer.classList.remove('hidden');
       document.getElementById('watchlistPageNum').innerText = `Page ${watchlistCurrentPage} of ${maxPage}`;
       document.getElementById('prevWatchlistPage').disabled = watchlistCurrentPage === 1;
@@ -340,11 +440,9 @@ async function loadWatchlistDetails(forceRefresh = false, cacheOnly = false) {
   }
 
   // Pre-fetching targets calculation
-  const nextPageItems = upToDateList.slice(endIndex, endIndex + watchlistItemsPerPage);
   const targetIds = [
     ...canWatchList.map(a => a.id),
-    ...paginatedUpToDateList.map(a => a.id),
-    ...nextPageItems.map(a => a.id)
+    ...paginatedUpToDateList.map(a => a.id)
   ];
 
   // Compute which shows need to be fetched in the background
@@ -408,6 +506,25 @@ async function loadWatchlistDetails(forceRefresh = false, cacheOnly = false) {
 
       // Persist the updated cache in localStorage
       localStorage.setItem('anime_metadata_cache', JSON.stringify(cachedApiDetails));
+
+      // Propagate new scheduling metadata to database in the background if logged in
+      if (window.supabaseClient && window.currentUser && typeof computeWatchlistColumns === 'function') {
+        newMedia.forEach(async item => {
+          const localItem = watchlist.find(w => w.id === item.id);
+          if (localItem) {
+            const cols = computeWatchlistColumns(localItem);
+            await window.supabaseClient
+              .from('watchlist')
+              .update({
+                status: cols.status,
+                next_airing_at: cols.next_airing_at,
+                last_released_at: cols.last_released_at
+              })
+              .eq('user_id', window.currentUser.id)
+              .eq('anime_id', item.id);
+          }
+        });
+      }
 
       // If the user has not switched away from the watchlist tab, re-render to apply the loaded details
       if (currentTab === 'watchlist') {

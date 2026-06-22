@@ -43,16 +43,64 @@ async function initSupabase() {
 // Start Supabase Init
 initSupabase();
 
+function computeWatchlistColumns(localItem, fallbackCols = null) {
+  const cache = window.cachedApiDetails || (typeof cachedApiDetails !== 'undefined' ? cachedApiDetails : []);
+  const apiItem = (cache && cache.find(a => a.id === localItem.id)) || {};
+  
+  if (!apiItem.id && fallbackCols) {
+    return {
+      status: fallbackCols.status || 'caught_up',
+      next_airing_at: fallbackCols.next_airing_at !== undefined ? fallbackCols.next_airing_at : null,
+      last_released_at: fallbackCols.last_released_at !== undefined ? fallbackCols.last_released_at : null
+    };
+  }
+
+  // Calculate unwatched count
+  let currentAiredGlobal = apiItem.episodes || 0;
+  if (apiItem.nextAiringEpisode) {
+    const timeDiff = apiItem.nextAiringEpisode.airingAt - Math.floor(Date.now() / 1000);
+    if (timeDiff > 0) {
+      currentAiredGlobal = apiItem.nextAiringEpisode.episode - 1;
+    } else {
+      currentAiredGlobal = apiItem.nextAiringEpisode.episode;
+    }
+  } else if (apiItem.status === 'RELEASING') {
+    currentAiredGlobal = localItem.progress; // fallback
+  }
+  const unwatchedCount = Math.max(0, currentAiredGlobal - localItem.progress);
+  const status = unwatchedCount > 0 ? 'can_watch' : 'caught_up';
+
+  let next_airing_at = null;
+  if (apiItem.nextAiringEpisode && apiItem.nextAiringEpisode.airingAt) {
+    const timeDiff = apiItem.nextAiringEpisode.airingAt - Math.floor(Date.now() / 1000);
+    if (timeDiff > 0) {
+      next_airing_at = apiItem.nextAiringEpisode.airingAt;
+    }
+  }
+
+  let last_released_at = null;
+  if (apiItem.id) {
+    const date = (apiItem.endDate && apiItem.endDate.year) ? apiItem.endDate : apiItem.startDate;
+    if (date && date.year) {
+      const month = (date.month || 1) - 1;
+      const day = date.day || 1;
+      last_released_at = new Date(date.year, month, day).getTime();
+    }
+  }
+
+  return { status, next_airing_at, last_released_at };
+}
+
 // Sync Watchlist from Supabase on Login (Merge local changes)
 async function syncWatchlistWithSupabase() {
   if (!window.supabaseClient || !window.currentUser) return;
   
   updateSyncStatus("Syncing...");
   try {
-    // 1. Fetch items from database
+    // 1. Fetch items from database (including new columns)
     const { data: dbItems, error: fetchErr } = await window.supabaseClient
       .from('watchlist')
-      .select('*');
+      .select('anime_id, title, progress, status, next_airing_at, last_released_at');
       
     if (fetchErr) throw fetchErr;
     
@@ -65,7 +113,10 @@ async function syncWatchlistWithSupabase() {
       mergedMap.set(item.anime_id, {
         id: item.anime_id,
         title: item.title,
-        progress: item.progress
+        progress: item.progress,
+        status: item.status,
+        next_airing_at: item.next_airing_at,
+        last_released_at: item.last_released_at
       });
     });
     
@@ -73,25 +124,49 @@ async function syncWatchlistWithSupabase() {
     for (const localItem of localWatchlist) {
       if (mergedMap.has(localItem.id)) {
         const dbMatch = mergedMap.get(localItem.id);
-        if (localItem.progress > dbMatch.progress) {
-          // Local is ahead, update in map and also update in db
-          dbMatch.progress = localItem.progress;
+        const mergedProgress = Math.max(localItem.progress, dbMatch.progress);
+        const cols = computeWatchlistColumns({ id: localItem.id, progress: mergedProgress }, dbMatch);
+        const needsDbUpdate = localItem.progress > dbMatch.progress || 
+                              dbMatch.status !== cols.status ||
+                              dbMatch.next_airing_at !== cols.next_airing_at ||
+                              dbMatch.last_released_at !== cols.last_released_at;
+        if (needsDbUpdate) {
+          dbMatch.progress = mergedProgress;
+          dbMatch.status = cols.status;
+          dbMatch.next_airing_at = cols.next_airing_at;
+          dbMatch.last_released_at = cols.last_released_at;
           await window.supabaseClient
             .from('watchlist')
-            .update({ progress: localItem.progress })
+            .update({ 
+              progress: dbMatch.progress,
+              status: cols.status,
+              next_airing_at: cols.next_airing_at,
+              last_released_at: cols.last_released_at
+            })
             .eq('user_id', window.currentUser.id)
             .eq('anime_id', localItem.id);
         }
       } else {
         // Local item not in DB, insert to DB and add to map
-        mergedMap.set(localItem.id, localItem);
+        const cols = computeWatchlistColumns(localItem);
+        mergedMap.set(localItem.id, {
+          id: localItem.id,
+          title: localItem.title,
+          progress: localItem.progress,
+          status: cols.status,
+          next_airing_at: cols.next_airing_at,
+          last_released_at: cols.last_released_at
+        });
         await window.supabaseClient
           .from('watchlist')
           .insert({
             user_id: window.currentUser.id,
             anime_id: localItem.id,
             title: localItem.title,
-            progress: localItem.progress
+            progress: localItem.progress,
+            status: cols.status,
+            next_airing_at: cols.next_airing_at,
+            last_released_at: cols.last_released_at
           });
       }
     }
@@ -109,7 +184,8 @@ async function syncWatchlistWithSupabase() {
 
         // Conflict Prevention: Skip if the show is already in the watchlist
         if (!watchlist.some(item => item.id === id)) {
-          watchlist.push({ id, title, progress: 0 });
+          const newItem = { id, title, progress: 0 };
+          watchlist.push(newItem);
 
           if (type === 'seasonal' && coverImage) {
             const existingInCache = cachedApiDetails.find(c => c.id === id);
@@ -127,11 +203,15 @@ async function syncWatchlistWithSupabase() {
           }
 
           // Insert into database and local storage
+          const cols = computeWatchlistColumns(newItem);
           await window.supabaseClient.from('watchlist').insert({
             user_id: window.currentUser.id,
             anime_id: id,
             title: title,
-            progress: 0
+            progress: 0,
+            status: cols.status,
+            next_airing_at: cols.next_airing_at,
+            last_released_at: cols.last_released_at
           });
           localStorage.setItem('anime_watchlist', JSON.stringify(watchlist));
         }
@@ -166,11 +246,17 @@ async function syncDataToSupabase() {
     
     // Upsert current items
     for (const item of watchlist) {
+      const cols = computeWatchlistColumns(item);
       if (dbIds.includes(item.id)) {
-        // Update progress
+        // Update progress and metadata sorting columns
         await window.supabaseClient
           .from('watchlist')
-          .update({ progress: item.progress })
+          .update({ 
+            progress: item.progress,
+            status: cols.status,
+            next_airing_at: cols.next_airing_at,
+            last_released_at: cols.last_released_at
+          })
           .eq('user_id', window.currentUser.id)
           .eq('anime_id', item.id);
       } else {
@@ -181,7 +267,10 @@ async function syncDataToSupabase() {
             user_id: window.currentUser.id,
             anime_id: item.id,
             title: item.title,
-            progress: item.progress
+            progress: item.progress,
+            status: cols.status,
+            next_airing_at: cols.next_airing_at,
+            last_released_at: cols.last_released_at
           });
       }
     }
