@@ -182,14 +182,10 @@ function updateSyncStatus(text, type = "info") {
 }
 
 function updateAuthUI(isLoggedIn, email = "") {
-  const syncPromptBanner = document.getElementById('syncPromptBanner');
-  const authContainer = document.getElementById('authContainer');
   const headerAuthBtn = document.getElementById('headerAuthBtn');
   const userDisplay = document.getElementById('userDisplay');
   
   if (isLoggedIn) {
-    if (syncPromptBanner) syncPromptBanner.classList.add('hidden');
-    if (authContainer) authContainer.classList.add('hidden');
     if (userDisplay) {
       userDisplay.innerText = email;
       userDisplay.classList.remove('hidden');
@@ -204,64 +200,8 @@ function updateAuthUI(isLoggedIn, email = "") {
     if (userDisplay) userDisplay.classList.add('hidden');
     if (headerAuthBtn) {
       headerAuthBtn.innerText = "🔑 Sign In";
-      headerAuthBtn.onclick = toggleAuthForm;
+      headerAuthBtn.onclick = () => { window.location.href = 'login.html'; };
       headerAuthBtn.className = "bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-3 py-1.5 rounded-lg font-bold cursor-pointer transition-all";
-    }
-  }
-}
-
-// Auth Handlers
-function toggleAuthForm() {
-  const authContainer = document.getElementById('authContainer');
-  if (!authContainer) return;
-  authContainer.classList.toggle('hidden');
-}
-
-async function handleEmailLogin(email, password) {
-  if (!window.supabaseClient) return alert("Supabase is not initialized.");
-  const errorEl = document.getElementById('authError');
-  if (errorEl) errorEl.classList.add('hidden');
-  
-  updateSyncStatus("Logging in...", "pending");
-  const { data, error } = await window.supabaseClient.auth.signInWithPassword({
-    email,
-    password
-  });
-  
-  if (error) {
-    console.error("Login failed:", error);
-    updateSyncStatus("Login Error", "error");
-    if (errorEl) {
-      errorEl.innerText = error.message;
-      errorEl.classList.remove('hidden');
-    }
-  }
-}
-
-async function handleEmailSignup(email, password) {
-  if (!window.supabaseClient) return alert("Supabase is not initialized.");
-  const errorEl = document.getElementById('authError');
-  if (errorEl) errorEl.classList.add('hidden');
-  
-  updateSyncStatus("Registering...", "pending");
-  const { data, error } = await window.supabaseClient.auth.signUp({
-    email,
-    password
-  });
-  
-  if (error) {
-    console.error("Signup failed:", error);
-    updateSyncStatus("Signup Error", "error");
-    if (errorEl) {
-      errorEl.innerText = error.message;
-      errorEl.classList.remove('hidden');
-    }
-  } else {
-    // If confirmation is required, let user know. Else Supabase signs them in or registers them.
-    if (data && data.user && data.session) {
-      // Automatically logged in
-    } else {
-      alert("Registration successful! Check your email for confirmation link if email confirmation is enabled.");
     }
   }
 }

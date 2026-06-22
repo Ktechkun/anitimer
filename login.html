@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login - AniStream Tracker</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen flex items-center justify-center font-sans p-6">
+  
+  <div class="w-full max-w-md bg-gray-800/60 border border-gray-700/60 p-8 rounded-3xl shadow-2xl backdrop-blur-md">
+    <div class="text-center mb-8">
+      <h1 class="text-3xl font-extrabold text-indigo-400">AniStream Sync</h1>
+      <p class="text-sm text-gray-400 mt-2">Access your anime watchlist from any device</p>
+    </div>
+
+    <!-- Form -->
+    <div class="flex flex-col gap-4">
+      <div>
+        <label for="email" class="block text-xs font-semibold text-gray-400 mb-1.5 uppercase tracking-wider">Email Address</label>
+        <input id="email" type="email" placeholder="you@example.com" class="w-full bg-gray-900/60 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition-all">
+      </div>
+
+      <div>
+        <label for="password" class="block text-xs font-semibold text-gray-400 mb-1.5 uppercase tracking-wider">Password</label>
+        <input id="password" type="password" placeholder="••••••••" class="w-full bg-gray-900/60 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition-all">
+      </div>
+
+      <div id="authError" class="hidden text-xs text-red-400 bg-red-950/40 border border-red-500/20 px-4 py-3 rounded-xl font-medium"></div>
+
+      <button id="submitBtn" onclick="handleAuthAction()" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-3 rounded-xl font-bold transition-all mt-2 cursor-pointer shadow-lg shadow-indigo-600/20">
+        Log In
+      </button>
+
+      <div class="text-center mt-6 pt-4 border-t border-gray-700/50">
+        <p id="toggleText" class="text-xs text-gray-400">
+          Don't have an account? 
+          <button onclick="toggleMode()" class="text-indigo-400 hover:text-indigo-300 font-bold ml-1 cursor-pointer">Sign Up</button>
+        </p>
+      </div>
+      
+      <div class="text-center mt-2">
+        <a href="index.html" class="text-xs text-gray-500 hover:text-gray-400 transition-all font-medium">← Back to Watchlist (Local Mode)</a>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let isSignUpMode = false;
+    let supabaseClient = null;
+
+    // Load credentials and initialize Supabase
+    async function initSupabase() {
+      try {
+        const res = await fetch('config.json');
+        if (!res.ok) throw new Error("Failed to load config.json");
+        const config = await res.json();
+        
+        const url = config.supabaseUrl;
+        const key = config.supabasePublishableKey || config.supabaseAnonKey;
+
+        if (url && key) {
+          supabaseClient = supabase.createClient(url, key);
+          
+          // Check if session already exists
+          const { data: { session } } = await supabaseClient.auth.getSession();
+          if (session) {
+            window.location.href = 'index.html';
+          }
+        } else {
+          showError("Supabase credentials missing in config.json. Please configure them first.");
+        }
+      } catch (err) {
+        showError("Failed to initialize database configuration.");
+        console.error(err);
+      }
+    }
+
+    initSupabase();
+
+    function toggleMode() {
+      isSignUpMode = !isSignUpMode;
+      const submitBtn = document.getElementById('submitBtn');
+      const toggleText = document.getElementById('toggleText');
+      const errorEl = document.getElementById('authError');
+      
+      if (errorEl) errorEl.classList.add('hidden');
+
+      if (isSignUpMode) {
+        submitBtn.innerText = "Sign Up";
+        toggleText.innerHTML = `Already have an account? <button onclick="toggleMode()" class="text-indigo-400 hover:text-indigo-300 font-bold ml-1 cursor-pointer">Log In</button>`;
+      } else {
+        submitBtn.innerText = "Log In";
+        toggleText.innerHTML = `Don't have an account? <button onclick="toggleMode()" class="text-indigo-400 hover:text-indigo-300 font-bold ml-1 cursor-pointer">Sign Up</button>`;
+      }
+    }
+
+    function showError(msg) {
+      const errorEl = document.getElementById('authError');
+      if (errorEl) {
+        errorEl.innerText = msg;
+        errorEl.classList.remove('hidden');
+      }
+    }
+
+    async function handleAuthAction() {
+      if (!supabaseClient) return alert("Configuration not loaded.");
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+      const errorEl = document.getElementById('authError');
+      const submitBtn = document.getElementById('submitBtn');
+
+      if (errorEl) errorEl.classList.add('hidden');
+      if (!email || !password) {
+        showError("Please enter both email and password.");
+        return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.innerText = isSignUpMode ? "Signing up..." : "Logging in...";
+
+      try {
+        if (isSignUpMode) {
+          const { data, error } = await supabaseClient.auth.signUp({ email, password });
+          if (error) throw error;
+          
+          if (data && data.user && data.session) {
+            // Already logged in directly
+            window.location.href = 'index.html';
+          } else {
+            alert("Registration successful! Check your email for confirmation link if email confirmation is enabled.");
+            submitBtn.disabled = false;
+            submitBtn.innerText = "Sign Up";
+          }
+        } else {
+          const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+          if (error) throw error;
+          window.location.href = 'index.html';
+        }
+      } catch (err) {
+        console.error(err);
+        showError(err.message);
+        submitBtn.disabled = false;
+        submitBtn.innerText = isSignUpMode ? "Sign Up" : "Log In";
+      }
+    }
+  </script>
+</body>
+</html>
