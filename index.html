@@ -180,6 +180,13 @@
     }
 
     function addToWatchlist(id, title) {
+      if (!window.currentUser) {
+        // Save pending add task
+        sessionStorage.setItem('pending_addition', JSON.stringify({ id, title, type: 'search' }));
+        // Redirect to login
+        window.location.href = 'login.html';
+        return;
+      }
       if (watchlist.some(item => item.id === id)) return alert("Already added!");
       watchlist.push({ id, title, progress: 0 });
       saveAndRefresh(true, false);
@@ -714,6 +721,13 @@
     }
 
     function addToWatchlistFromSeasonal(id, title, coverImage) {
+      if (!window.currentUser) {
+        // Save pending add task
+        sessionStorage.setItem('pending_addition', JSON.stringify({ id, title, coverImage, type: 'seasonal' }));
+        // Redirect to login
+        window.location.href = 'login.html';
+        return;
+      }
       if (watchlist.some(item => item.id === id)) return alert("Already added!");
       watchlist.push({ id, title, progress: 0 });
       
@@ -731,7 +745,7 @@
         localStorage.setItem('anime_metadata_cache', JSON.stringify(cachedApiDetails));
       }
       
-      saveAndRefresh(false, true); // save watchlist and sync to Google Drive
+      saveAndRefresh(false, true); // save watchlist and sync to Supabase
       
       // Re-render seasonal list to reflect "In Watchlist" state
       loadSeasonalAnime();

@@ -100,6 +100,46 @@ async function syncWatchlistWithSupabase() {
     watchlist = Array.from(mergedMap.values());
     localStorage.setItem('anime_watchlist', JSON.stringify(watchlist));
     
+    // Check for pending additions
+    const pendingAdd = sessionStorage.getItem('pending_addition');
+    if (pendingAdd) {
+      try {
+        const { id, title, coverImage, type } = JSON.parse(pendingAdd);
+        sessionStorage.removeItem('pending_addition'); // clear immediately
+
+        // Conflict Prevention: Skip if the show is already in the watchlist
+        if (!watchlist.some(item => item.id === id)) {
+          watchlist.push({ id, title, progress: 0 });
+
+          if (type === 'seasonal' && coverImage) {
+            const existingInCache = cachedApiDetails.find(c => c.id === id);
+            if (!existingInCache) {
+              cachedApiDetails.push({
+                id: id,
+                title: { romaji: title, english: title },
+                coverImage: { large: coverImage },
+                status: 'RELEASING',
+                episodes: null,
+                nextAiringEpisode: null
+              });
+              localStorage.setItem('anime_metadata_cache', JSON.stringify(cachedApiDetails));
+            }
+          }
+
+          // Insert into database and local storage
+          await window.supabaseClient.from('watchlist').insert({
+            user_id: window.currentUser.id,
+            anime_id: id,
+            title: title,
+            progress: 0
+          });
+          localStorage.setItem('anime_watchlist', JSON.stringify(watchlist));
+        }
+      } catch (e) {
+        console.error("Failed to execute pending addition:", e);
+      }
+    }
+    
     // Re-render
     loadWatchlistDetails(true); // Force API fresh details if needed
     updateSyncStatus("Synced", "success");
@@ -213,5 +253,17 @@ async function handleLogout() {
   if (error) {
     console.error("Logout failed:", error);
     updateSyncStatus("Logout Error", "error");
+  } else {
+    // Clear watchlist and metadata caches from localStorage
+    localStorage.removeItem('anime_watchlist');
+    localStorage.removeItem('anime_metadata_cache');
+    
+    // Reset global watchlist states in the window execution context
+    watchlist = [];
+    cachedApiDetails = [];
+    watchlistCurrentPage = 1;
+    
+    // Trigger dashboard re-render to display the empty state
+    loadWatchlistDetails();
   }
 }
