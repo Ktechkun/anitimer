@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lightweight Anime Watch Tracker</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen font-sans">
+
+  <div class="max-w-5xl mx-auto p-6">
+    <!-- Header -->
+    <header class="flex justify-between items-center mb-8 border-b border-gray-800 pb-4">
+      <div>
+        <h1 class="text-3xl font-extrabold text-indigo-400">AniStream Tracker</h1>
+        <p class="text-sm text-gray-400">Track progress & live countdowns</p>
+      </div>
+      <div class="text-xs bg-gray-800 text-gray-400 px-3 py-1.5 rounded border border-gray-700">
+        Storage: LocalStorage (Drive Sync Ready)
+      </div>
+    </header>
+
+    <!-- Search Section -->
+    <section class="bg-gray-800 p-4 rounded-xl border border-gray-700 mb-8">
+      <h2 class="text-lg font-bold mb-3 text-gray-200">Add Anime to Watchlist</h2>
+      <div class="flex gap-2">
+        <input id="searchInput" type="text" placeholder="Type anime name (e.g., Chainsaw Man)..." class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+        <button id="searchBtn" class="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2 rounded font-semibold transition-colors">Search</button>
+      </div>
+      <div id="searchResults" class="grid grid-cols-1 md:grid-cols-2 gap-2 mt-4"></div>
+    </section>
+
+    <!-- Watchlist Grid -->
+    <section>
+      <h2 class="text-2xl font-bold mb-4 text-gray-200">My Watchlist</h2>
+      <div id="watchlistGrid" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <!-- Javascript dynamic rendering injection target -->
+      </div>
+    </section>
+  </div>
+
+  <script>
+    // State Management
+    let watchlist = JSON.parse(localStorage.getItem('anime_watchlist')) || [];
+
+    // Base API call to AniList GraphQL
+    async function fetchAniList(query, variables = {}) {
+      try {
+        const response = await fetch('https://graphql.anilist.co', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({ query, variables })
+        });
+        const json = await response.json();
+        return json.data;
+      } catch (err) {
+        console.error("API Fetch Error:", err);
+      }
+    }
+
+    // Search Anime Action
+    document.getElementById('searchBtn').addEventListener('click', async () => {
+      const term = document.getElementById('searchInput').value;
+      if (!term) return;
+      
+      const query = `
+        query ($search: String) {
+          Page(perPage: 4) {
+            media(search: $search, type: ANIME) {
+              id
+              title { romaji english }
+              coverImage { medium }
+              episodes
+              status
+              nextAiringEpisode { airingAt episode }
+            }
+          }
+        }`;
+      
+      const data = await fetchAniList(query, { search: term });
+      renderSearchResults(data.Page.media);
+    });
+
+    function renderSearchResults(results) {
+      const container = document.getElementById('searchResults');
+      container.innerHTML = '';
+      
+      results.forEach(anime => {
+        const title = anime.title.english || anime.title.romaji;
+        const div = document.createElement('div');
+        div.className = "flex items-center justify-between bg-gray-900 p-3 rounded border border-gray-700";
+        div.innerHTML = `
+          <div class="flex items-center gap-3">
+            <img src="${anime.coverImage.medium}" class="w-10 h-14 object-cover rounded">
+            <div>
+              <p class="font-semibold text-sm line-clamp-1">${title}</p>
+              <p class="text-xs text-gray-400">Total Ep: ${anime.episodes || '?'}</p>
+            </div>
+          </div>
+          <button onclick="addToWatchlist(${anime.id}, '${title.replace(/'/g, "\\'")}')" class="bg-emerald-600 hover:bg-emerald-500 text-xs px-3 py-1.5 rounded font-bold transition-colors">Add</button>
+        `;
+        container.innerHTML += div.outerHTML;
+      });
+    }
+
+    function addToWatchlist(id, title) {
+      if (watchlist.some(item => item.id === id)) return alert("Already added!");
+      watchlist.push({ id, title, progress: 0 });
+      saveAndRefresh();
+      document.getElementById('searchResults').innerHTML = '';
+      document.getElementById('searchInput').value = '';
+    }
+
+    function incrementProgress(id) {
+      const item = watchlist.find(a => a.id === id);
+      if (item) {
+        item.progress++;
+        saveAndRefresh();
+      }
+    }
+
+    function deleteAnime(id) {
+      watchlist = watchlist.filter(item => item.id !== id);
+      saveAndRefresh();
+    }
+
+    function saveAndRefresh() {
+      localStorage.setItem('anime_watchlist', JSON.stringify(watchlist));
+      loadWatchlistDetails();
+    }
+
+    // Hydrate data with airing statuses & calculate gaps
+    async function loadWatchlistDetails() {
+      if (watchlist.length === 0) {
+        document.getElementById('watchlistGrid').innerHTML = '<p class="text-gray-500 text-sm">Your watchlist is empty.</p>';
+        return;
+      }
+
+      const ids = watchlist.map(a => a.id);
+      const query = `
+        query ($ids: [Int]) {
+          Page {
+            media(id_in: $ids) {
+              id
+              status
+              episodes
+              coverImage { large }
+              nextAiringEpisode { airingAt episode }
+            }
+          }
+        }`;
+
+      const data = await fetchAniList(query, { ids });
+      renderWatchlist(data.Page.media);
+    }
+
+    function renderWatchlist(apiDetails) {
+      const container = document.getElementById('watchlistGrid');
+      container.innerHTML = '';
+
+      watchlist.forEach(localItem => {
+        const apiItem = apiDetails.find(a => a.id === localItem.id) || {};
+        
+        // Calculate total episodes available globally right now
+        let currentAiredGlobal = apiItem.episodes || 0;
+        let countdownText = "";
+
+        if (apiItem.nextAiringEpisode) {
+          currentAiredGlobal = apiItem.nextAiringEpisode.episode - 1;
+          const timeDiff = apiItem.nextAiringEpisode.airingAt - Math.floor(Date.now() / 1000);
+          if (timeDiff > 0) {
+            const days = Math.floor(timeDiff / (3600 * 24));
+            const hours = Math.floor((timeDiff % (3600 * 24)) / 3600);
+            countdownText = `Ep ${apiItem.nextAiringEpisode.episode} in ${days}d ${hours}h`;
+          }
+        } else if (apiItem.status === 'RELEASING') {
+          currentAiredGlobal = localItem.progress; // fallback if dynamic air data missing
+        }
+
+        // Catch up metric calculations
+        const unwatchedCount = currentAiredGlobal - localItem.progress;
+        const canWatchBadge = unwatchedCount > 0 
+          ? `<span class="bg-amber-500/20 text-amber-400 border border-amber-500/30 text-xs px-2 py-0.5 rounded-full font-bold animate-pulse">${unwatchedCount} Can Watch</span>`
+          : `<span class="bg-gray-800 text-gray-500 text-xs px-2 py-0.5 rounded-full">Caught Up</span>`;
+
+        const card = document.createElement('div');
+        card.className = "bg-gray-800 p-4 rounded-xl border border-gray-700 flex gap-4 relative overflow-hidden";
+        card.innerHTML = `
+          <img src="${apiItem.coverImage?.large}" class="w-20 h-28 object-cover rounded shadow-lg">
+          <div class="flex flex-col justify-between flex-1">
+            <div>
+              <div class="flex items-start justify-between gap-2 mb-1">
+                <h3 class="font-bold text-sm md:text-base line-clamp-1 text-white">${localItem.title}</h3>
+                <button onclick="deleteAnime(${localItem.id})" class="text-gray-500 hover:text-red-400 text-xs transition-colors">✕</button>
+              </div>
+              <div class="flex gap-2 items-center mt-1">
+                ${canWatchBadge}
+                ${countdownText ? `<span class="text-xs text-indigo-400 font-medium bg-indigo-950/40 px-2 py-0.5 rounded">${countdownText}</span>` : ''}
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between border-t border-gray-700/60 pt-2 mt-2">
+              <span class="text-sm font-medium text-gray-300">
+                My Progress: <strong class="text-indigo-400 text-base">${localItem.progress}</strong> / ${apiItem.episodes || '?'}
+              </span>
+              <button onclick="incrementProgress(${localItem.id})" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1 transition-all">
+                +1 Ep
+              </button>
+            </div>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    // Initial Dashboard execution on structural load
+    loadWatchlistDetails();
+  </script>
+</body>
+</html>
