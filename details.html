@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Anime Details - AniStream Tracker</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    @keyframes shimmer {
+      0% { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+    .shimmer-subtle {
+      background: linear-gradient(90deg, #1f2937 25%, #2d3748 50%, #1f2937 75%) !important;
+      background-size: 200% 100% !important;
+      animation: shimmer 2s infinite linear !important;
+    }
+  </style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen font-sans pb-12">
+
+  <!-- Banner Area -->
+  <div id="bannerContainer" class="relative h-48 md:h-64 w-full bg-gray-950 overflow-hidden">
+    <div id="bannerShimmer" class="absolute inset-0 shimmer-subtle"></div>
+    <img id="bannerImg" class="absolute inset-0 w-full h-full object-cover hidden opacity-40">
+    <div class="absolute inset-0 bg-gradient-to-t from-gray-900 to-transparent"></div>
+    <div class="absolute top-4 left-6 z-10">
+      <a href="index.html" class="flex items-center gap-2 bg-gray-900/80 hover:bg-gray-800 text-white border border-gray-700/60 text-xs md:text-sm px-4 py-2 rounded-xl font-bold backdrop-blur-md transition-all">
+        ← Back to Watchlist
+      </a>
+    </div>
+  </div>
+
+  <div class="max-w-5xl mx-auto px-6 -mt-16 relative z-10">
+    <!-- Main Detail Grid -->
+    <div id="detailsLoading" class="text-center py-16 text-gray-400">
+      <p class="text-lg font-medium animate-pulse">Loading anime details...</p>
+    </div>
+
+    <div id="detailsContent" class="hidden grid grid-cols-1 md:grid-cols-3 gap-8">
+      
+      <!-- Left Info Panel -->
+      <div class="flex flex-col gap-6">
+        <!-- Cover Card -->
+        <div class="bg-gray-800 p-4 rounded-3xl border border-gray-700/60 shadow-xl overflow-hidden flex flex-col items-center">
+          <img id="coverImg" class="w-48 h-68 object-cover rounded-2xl shadow-lg mb-4" src="" alt="Cover Image">
+          <h2 id="animeTitle" class="text-lg md:text-xl font-extrabold text-center text-white line-clamp-2"></h2>
+          <p id="animeNativeTitle" class="text-xs text-gray-400 text-center mt-1"></p>
+
+          <div class="w-full border-t border-gray-700/60 my-4 pt-4 flex flex-col gap-3 text-xs md:text-sm text-gray-300">
+            <div class="flex justify-between">
+              <span class="text-gray-400">Status:</span>
+              <span id="animeStatus" class="font-semibold capitalize text-indigo-400"></span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-gray-400">Total Episodes:</span>
+              <span id="animeTotalEpisodes" class="font-semibold text-white"></span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-gray-400">Average Score:</span>
+              <span id="animeScore" class="font-semibold text-amber-400"></span>
+            </div>
+          </div>
+
+          <div class="w-full flex flex-col gap-2 mt-2">
+            <button id="watchlistActionBtn" class="w-full py-3 rounded-xl text-xs md:text-sm font-bold text-white transition-all cursor-pointer shadow-lg"></button>
+            <div id="syncStatus" class="text-center text-[10px] text-gray-400">☁️ Supabase: Loading auth...</div>
+          </div>
+        </div>
+
+        <!-- Genres Card -->
+        <div class="bg-gray-800 p-6 rounded-3xl border border-gray-700/60 shadow-xl">
+          <h3 class="font-bold text-sm text-gray-400 uppercase tracking-wider mb-3">Genres</h3>
+          <div id="genresContainer" class="flex flex-wrap gap-2"></div>
+        </div>
+      </div>
+
+      <!-- Right Main Content Panel -->
+      <div class="md:col-span-2 flex flex-col gap-6">
+        <!-- Description -->
+        <div class="bg-gray-800 p-6 md:p-8 rounded-3xl border border-gray-700/60 shadow-xl">
+          <h3 class="font-bold text-sm text-gray-400 uppercase tracking-wider mb-3">Synopsis</h3>
+          <div id="animeDescription" class="text-sm md:text-base text-gray-300 leading-relaxed max-h-60 overflow-y-auto pr-2"></div>
+        </div>
+
+        <!-- Episodes Checklist Area -->
+        <div class="bg-gray-800 p-6 md:p-8 rounded-3xl border border-gray-700/60 shadow-xl flex-1 flex flex-col min-h-[300px]">
+          <div class="flex justify-between items-center mb-6 pb-4 border-b border-gray-700/60">
+            <div>
+              <h3 class="font-extrabold text-lg text-white">Episodes Progress</h3>
+              <p class="text-xs text-gray-400 mt-0.5">Click an episode to set your progress</p>
+            </div>
+            <div class="text-right">
+              <span class="text-xs text-gray-400">Progress:</span>
+              <div id="progressDisplay" class="text-indigo-400 font-bold text-base md:text-lg">0 / 0</div>
+            </div>
+          </div>
+          
+          <!-- Dynamic Episode Pagination Range Tabs -->
+          <div id="episodesPagination" class="hidden flex flex-wrap gap-1.5 mb-4 max-h-24 overflow-y-auto pr-1"></div>
+
+          <!-- Episode grid/list scrollable -->
+          <div id="episodesLoading" class="text-center text-sm py-12 text-gray-500 animate-pulse">Loading episodes...</div>
+          
+          <div id="episodesNotAdded" class="hidden text-center text-sm py-12 text-gray-500">
+            Add this anime to your watchlist to start tracking episodes.
+          </div>
+
+          <div id="episodesGrid" class="hidden grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <!-- Dynamic Episode Checklist Items -->
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+  </div>
+
+  <script src="details.js"></script>
+</body>
+</html>

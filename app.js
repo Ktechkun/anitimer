@@ -693,12 +693,16 @@ function renderWatchlistSection(pageItems, containerId) {
     const card = document.createElement('div');
     card.className = "bg-gray-800 p-4 rounded-xl border border-gray-700 flex gap-4 relative overflow-hidden";
     card.innerHTML = `
-      ${coverHtml}
-      <div class="flex flex-col justify-between flex-1">
+      <a href="details.html?id=${localItem.id}" class="shrink-0">
+        ${coverHtml}
+      </a>
+      <div class="flex flex-col justify-between flex-1 min-w-0">
         <div>
           <div class="flex items-start justify-between gap-2 mb-1">
-            <h3 class="font-bold text-sm md:text-base line-clamp-1 text-white">${localItem.title}</h3>
-            <button onclick="deleteAnime(${localItem.id})" class="text-gray-500 hover:text-red-400 text-xs transition-colors">✕</button>
+            <a href="details.html?id=${localItem.id}" class="min-w-0 flex-1 hover:underline">
+              <h3 class="font-bold text-sm md:text-base line-clamp-1 text-white">${localItem.title}</h3>
+            </a>
+            <button onclick="deleteAnime(${localItem.id})" class="text-gray-500 hover:text-red-400 text-xs transition-colors shrink-0">✕</button>
           </div>
           <div class="flex gap-2 items-center mt-1">
             ${badgeAreaHtml}
@@ -914,11 +918,15 @@ function renderSeasonalList(mediaList) {
     const card = document.createElement('div');
     card.className = "bg-gray-800 p-4 rounded-xl border border-gray-700 flex gap-4 relative overflow-hidden";
     card.innerHTML = `
-      <img src="${anime.coverImage.large}" class="w-20 h-28 object-cover rounded shadow-lg shrink-0">
+      <a href="details.html?id=${anime.id}" class="shrink-0">
+        <img src="${anime.coverImage.large}" class="w-20 h-28 object-cover rounded shadow-lg">
+      </a>
       <div class="flex flex-col justify-between flex-1 min-w-0">
         <div>
           <div class="flex items-start justify-between gap-2 mb-1">
-            <h3 class="font-bold text-sm md:text-base line-clamp-2 text-white min-w-0">${title}</h3>
+            <a href="details.html?id=${anime.id}" class="min-w-0 flex-1 hover:underline">
+              <h3 class="font-bold text-sm md:text-base line-clamp-2 text-white">${title}</h3>
+            </a>
           </div>
           <div class="flex gap-2 items-center mt-1">
             <span class="text-xs text-gray-400">Total Ep: ${anime.episodes || '?'}</span>
