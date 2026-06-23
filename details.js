@@ -69,6 +69,23 @@ async function fetchAniListDetails(id) {
           month
           day
         }
+        relations {
+          edges {
+            relationType(version: 2)
+            node {
+              id
+              title {
+                romaji
+                english
+              }
+              type
+              status
+              coverImage {
+                large
+              }
+            }
+          }
+        }
       }
     }
   `;
@@ -380,9 +397,17 @@ function renderMetadata() {
         animeNextEpisode.innerText = formatCountdownText(airingAt, episode);
         nextEpisodeRow.classList.remove('hidden');
       } else {
+        animeNextEpisode.className = "font-semibold text-indigo-400";
+        animeNextEpisode.removeAttribute('data-airing-at');
+        animeNextEpisode.removeAttribute('data-episode');
+        animeNextEpisode.removeAttribute('data-expired');
         nextEpisodeRow.classList.add('hidden');
       }
     } else {
+      animeNextEpisode.className = "font-semibold text-indigo-400";
+      animeNextEpisode.removeAttribute('data-airing-at');
+      animeNextEpisode.removeAttribute('data-episode');
+      animeNextEpisode.removeAttribute('data-expired');
       nextEpisodeRow.classList.add('hidden');
     }
   }
@@ -406,6 +431,43 @@ function renderMetadata() {
   // Synopsis
   const descEl = document.getElementById('animeDescription');
   if (descEl) descEl.innerHTML = mediaDetails.description || "<p class='text-gray-500'>No description available.</p>";
+
+  // Related Seasons/Series
+  const relationsCard = document.getElementById('relationsCard');
+  const relationsContainer = document.getElementById('relationsContainer');
+  if (relationsCard && relationsContainer) {
+    relationsContainer.innerHTML = '';
+    
+    // Filter to only include ANIME nodes (not MANGA/NOVEL source material)
+    const animeRelations = (mediaDetails.relations && mediaDetails.relations.edges)
+      ? mediaDetails.relations.edges.filter(edge => edge.node && edge.node.type === 'ANIME')
+      : [];
+      
+    if (animeRelations.length > 0) {
+      animeRelations.forEach(edge => {
+        const relationType = edge.relationType ? edge.relationType.replace(/_/g, ' ') : 'Relation';
+        const node = edge.node;
+        const nodeTitle = node.title.english || node.title.romaji;
+        const statusText = node.status ? node.status.toLowerCase().replace(/_/g, ' ') : '';
+        
+        const a = document.createElement('a');
+        a.href = `details.html?id=${node.id}`;
+        a.className = "flex items-center gap-3 p-2 rounded-2xl bg-gray-900/40 hover:bg-gray-900 border border-gray-800/40 hover:border-indigo-500/20 transition-all group cursor-pointer";
+        a.innerHTML = `
+          <img src="${node.coverImage?.large || ''}" class="w-10 h-14 object-cover rounded-lg group-hover:scale-[1.03] transition-all shrink-0">
+          <div class="min-w-0 flex-1">
+            <p class="font-bold text-[10px] text-indigo-400 uppercase tracking-wider">${relationType}</p>
+            <p class="font-bold text-xs text-white line-clamp-1 group-hover:text-indigo-300 transition-colors">${nodeTitle}</p>
+            <p class="text-[9px] text-gray-500 capitalize mt-0.5">${statusText}</p>
+          </div>
+        `;
+        relationsContainer.appendChild(a);
+      });
+      relationsCard.classList.remove('hidden');
+    } else {
+      relationsCard.classList.add('hidden');
+    }
+  }
 }
 
 // Render the Episode Checklist grid with pagination
@@ -598,6 +660,7 @@ function startCountdownTicker() {
       if (airingAt <= Math.floor(Date.now() / 1000)) {
         if (!el.dataset.expired) {
           el.dataset.expired = "true";
+          el.classList.remove('countdown-ticker');
           needsRefresh = true;
         }
       }
