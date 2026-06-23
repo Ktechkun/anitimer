@@ -7,6 +7,30 @@ let supabaseClient = null;
 let currentUser = null;
 let localWatchlist = JSON.parse(localStorage.getItem('anime_watchlist')) || [];
 
+// Synchronous check from sessionStorage to prevent UI flash
+(function preAuthSetup() {
+  const cachedUserId = sessionStorage.getItem('sb_user_id');
+  const cachedUserEmail = sessionStorage.getItem('sb_user_email');
+  if (cachedUserId && cachedUserEmail) {
+    currentUser = { id: cachedUserId, email: cachedUserEmail };
+    isUserLoggedIn = true;
+    
+    const runSetup = () => {
+      const syncStatusEl = document.getElementById('syncStatus');
+      if (syncStatusEl) {
+        syncStatusEl.innerText = `☁️ Supabase: Logged in (${cachedUserEmail})`;
+        syncStatusEl.className = "text-center text-[10px] text-emerald-400 font-medium";
+      }
+    };
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', runSetup);
+    } else {
+      runSetup();
+    }
+  }
+})();
+
 // Page State for Episode Pagination
 let episodesCurrentPage = null;
 const episodesPerPage = 24;
@@ -160,12 +184,17 @@ async function initSupabase() {
       if (session) {
         currentUser = session.user;
         isUserLoggedIn = true;
+        sessionStorage.setItem('sb_user_id', session.user.id);
+        sessionStorage.setItem('sb_user_email', session.user.email);
         if (syncStatusEl) {
           syncStatusEl.innerText = `☁️ Supabase: Logged in (${session.user.email})`;
           syncStatusEl.className = "text-center text-[10px] text-emerald-400 font-medium";
         }
       } else {
         isUserLoggedIn = false;
+        currentUser = null;
+        sessionStorage.removeItem('sb_user_id');
+        sessionStorage.removeItem('sb_user_email');
         if (syncStatusEl) {
           syncStatusEl.innerText = "☁️ Supabase: Local Mode (Not Logged In)";
           syncStatusEl.className = "text-center text-[10px] text-gray-400 font-medium";

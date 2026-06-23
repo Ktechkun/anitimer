@@ -2,6 +2,26 @@
 window.supabaseClient = null;
 window.currentUser = null;
 
+// Synchronous check from sessionStorage to prevent UI flash
+(function preAuthSetup() {
+  const cachedUserId = sessionStorage.getItem('sb_user_id');
+  const cachedUserEmail = sessionStorage.getItem('sb_user_email');
+  if (cachedUserId && cachedUserEmail) {
+    window.currentUser = { id: cachedUserId, email: cachedUserEmail };
+    
+    const runSetup = () => {
+      updateAuthUI(true, cachedUserEmail);
+      updateSyncStatus("Syncing...", "pending");
+    };
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', runSetup);
+    } else {
+      runSetup();
+    }
+  }
+})();
+
 // Helper to compare dates/timestamps of different types (Unix, milliseconds, ISO strings)
 function isDateEqual(val1, val2) {
   if (!val1 && !val2) return true;
@@ -34,10 +54,14 @@ async function initSupabase() {
       window.supabaseClient.auth.onAuthStateChange((event, session) => {
         if (session) {
           window.currentUser = session.user;
+          sessionStorage.setItem('sb_user_id', session.user.id);
+          sessionStorage.setItem('sb_user_email', session.user.email);
           updateAuthUI(true, session.user.email);
           syncWatchlistWithSupabase();
         } else {
           window.currentUser = null;
+          sessionStorage.removeItem('sb_user_id');
+          sessionStorage.removeItem('sb_user_email');
           updateAuthUI(false);
           // Restore local watchlist state
           watchlist = JSON.parse(localStorage.getItem('anime_watchlist')) || [];
@@ -377,6 +401,10 @@ async function handleLogout() {
     // Clear watchlist and metadata caches from localStorage
     localStorage.removeItem('anime_watchlist');
     localStorage.removeItem('anime_metadata_cache');
+    
+    // Clear session storage cached user
+    sessionStorage.removeItem('sb_user_id');
+    sessionStorage.removeItem('sb_user_email');
     
     // Reset global watchlist states in the window execution context
     watchlist = [];
