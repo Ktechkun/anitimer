@@ -70,16 +70,19 @@ function computeWatchlistColumns(localItem, fallbackCols = null) {
   }
 
   // Calculate unwatched count
-  let currentAiredGlobal = apiItem.episodes || 0;
-  if (apiItem.nextAiringEpisode) {
-    const timeDiff = apiItem.nextAiringEpisode.airingAt - Math.floor(Date.now() / 1000);
-    if (timeDiff > 0) {
-      currentAiredGlobal = apiItem.nextAiringEpisode.episode - 1;
-    } else {
-      currentAiredGlobal = apiItem.nextAiringEpisode.episode;
+  let currentAiredGlobal = 0;
+  if (apiItem.status !== 'NOT_YET_RELEASED') {
+    currentAiredGlobal = apiItem.episodes || 0;
+    if (apiItem.nextAiringEpisode) {
+      const timeDiff = apiItem.nextAiringEpisode.airingAt - Math.floor(Date.now() / 1000);
+      if (timeDiff > 0) {
+        currentAiredGlobal = apiItem.nextAiringEpisode.episode - 1;
+      } else {
+        currentAiredGlobal = apiItem.nextAiringEpisode.episode;
+      }
+    } else if (apiItem.status === 'RELEASING') {
+      currentAiredGlobal = localItem.progress; // fallback
     }
-  } else if (apiItem.status === 'RELEASING') {
-    currentAiredGlobal = localItem.progress; // fallback
   }
   const unwatchedCount = Math.max(0, currentAiredGlobal - localItem.progress);
   const status = unwatchedCount > 0 ? 'can_watch' : 'caught_up';

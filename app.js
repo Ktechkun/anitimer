@@ -158,7 +158,10 @@ async function incrementProgress(id) {
     let limit = null;
     let limitMessage = "";
 
-    if (apiItem.nextAiringEpisode) {
+    if (apiItem.status === 'NOT_YET_RELEASED') {
+      limit = 0;
+      limitMessage = "for unreleased anime";
+    } else if (apiItem.nextAiringEpisode) {
       const timeDiff = apiItem.nextAiringEpisode.airingAt - Math.floor(Date.now() / 1000);
       limit = timeDiff > 0 ? apiItem.nextAiringEpisode.episode - 1 : apiItem.nextAiringEpisode.episode;
       limitMessage = `cannot exceed the number of episodes aired so far (${limit})`;
@@ -206,7 +209,10 @@ async function updateProgressDirect(id, element) {
     let limit = null;
     let limitMessage = "";
 
-    if (apiItem.nextAiringEpisode) {
+    if (apiItem.status === 'NOT_YET_RELEASED') {
+      limit = 0;
+      limitMessage = "for unreleased anime";
+    } else if (apiItem.nextAiringEpisode) {
       const timeDiff = apiItem.nextAiringEpisode.airingAt - Math.floor(Date.now() / 1000);
       limit = timeDiff > 0 ? apiItem.nextAiringEpisode.episode - 1 : apiItem.nextAiringEpisode.episode;
       limitMessage = `cannot exceed the number of episodes aired so far (${limit})`;
@@ -642,27 +648,30 @@ function renderWatchlistSection(pageItems, containerId) {
       : `<div class="w-20 h-28 rounded shimmer-subtle shrink-0"></div>`;
 
     // Calculate total episodes available globally right now
-    let currentAiredGlobal = apiItem.episodes || 0;
+    let currentAiredGlobal = 0;
     let countdownHtml = "";
 
-    if (apiItem.nextAiringEpisode) {
-      const timeDiff = apiItem.nextAiringEpisode.airingAt - Math.floor(Date.now() / 1000);
-      if (timeDiff > 0) {
-        currentAiredGlobal = apiItem.nextAiringEpisode.episode - 1;
-        const formatted = formatCountdownText(apiItem.nextAiringEpisode.airingAt, apiItem.nextAiringEpisode.episode);
-        countdownHtml = `
-          <span class="countdown-ticker text-xs text-indigo-400 font-medium bg-indigo-950/40 px-2 py-0.5 rounded"
-                data-airing-at="${apiItem.nextAiringEpisode.airingAt}"
-                data-episode="${apiItem.nextAiringEpisode.episode}"
-                data-anime-id="${localItem.id}">
-            ${formatted}
-          </span>
-        `;
-      } else {
-        currentAiredGlobal = apiItem.nextAiringEpisode.episode;
+    if (apiItem.status !== 'NOT_YET_RELEASED') {
+      currentAiredGlobal = apiItem.episodes || 0;
+      if (apiItem.nextAiringEpisode) {
+        const timeDiff = apiItem.nextAiringEpisode.airingAt - Math.floor(Date.now() / 1000);
+        if (timeDiff > 0) {
+          currentAiredGlobal = apiItem.nextAiringEpisode.episode - 1;
+          const formatted = formatCountdownText(apiItem.nextAiringEpisode.airingAt, apiItem.nextAiringEpisode.episode);
+          countdownHtml = `
+            <span class="countdown-ticker text-xs text-indigo-400 font-medium bg-indigo-950/40 px-2 py-0.5 rounded"
+                  data-airing-at="${apiItem.nextAiringEpisode.airingAt}"
+                  data-episode="${apiItem.nextAiringEpisode.episode}"
+                  data-anime-id="${localItem.id}">
+              ${formatted}
+            </span>
+          `;
+        } else {
+          currentAiredGlobal = apiItem.nextAiringEpisode.episode;
+        }
+      } else if (apiItem.status === 'RELEASING') {
+        currentAiredGlobal = localItem.progress; // fallback if dynamic air data missing
       }
-    } else if (apiItem.status === 'RELEASING') {
-      currentAiredGlobal = localItem.progress; // fallback if dynamic air data missing
     }
 
     // Catch up metric calculations

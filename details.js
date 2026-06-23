@@ -53,6 +53,10 @@ async function fetchAniListDetails(id) {
         }
         episodes
         status
+        nextAiringEpisode {
+          airingAt
+          episode
+        }
         genres
         averageScore
         startDate {
@@ -87,16 +91,26 @@ async function fetchAniListDetails(id) {
 function computeWatchlistColumns(localProgress, apiItem) {
   if (!apiItem) return { status: 'caught_up', next_airing_at: null, last_released_at: null };
   
-  let currentAiredGlobal = apiItem.episodes || 0;
-  if (apiItem.status === 'RELEASING') {
-    // fallback or dynamic calculations could be performed here
-    currentAiredGlobal = localProgress; 
+  let currentAiredGlobal = 0;
+  if (apiItem.status !== 'NOT_YET_RELEASED') {
+    currentAiredGlobal = apiItem.episodes || 0;
+    if (apiItem.nextAiringEpisode) {
+      const timeDiff = apiItem.nextAiringEpisode.airingAt - Math.floor(Date.now() / 1000);
+      currentAiredGlobal = timeDiff > 0 ? apiItem.nextAiringEpisode.episode - 1 : apiItem.nextAiringEpisode.episode;
+    } else if (apiItem.status === 'RELEASING') {
+      currentAiredGlobal = localProgress; 
+    }
   }
   const unwatchedCount = Math.max(0, currentAiredGlobal - localProgress);
   const status = unwatchedCount > 0 ? 'can_watch' : 'caught_up';
 
   let next_airing_at = null;
-  // If next airing details existed, we could parse them
+  if (apiItem.nextAiringEpisode && apiItem.nextAiringEpisode.airingAt) {
+    const timeDiff = apiItem.nextAiringEpisode.airingAt - Math.floor(Date.now() / 1000);
+    if (timeDiff > 0) {
+      next_airing_at = apiItem.nextAiringEpisode.airingAt;
+    }
+  }
 
   let last_released_at = null;
   const date = (apiItem.endDate && apiItem.endDate.year) ? apiItem.endDate : apiItem.startDate;
@@ -111,6 +125,7 @@ function computeWatchlistColumns(localProgress, apiItem) {
 
 // Initialize Supabase Client
 async function initSupabase() {
+  if (supabaseClient) return;
   const syncStatusEl = document.getElementById('syncStatus');
   try {
     const res = await fetch('config.json');
@@ -348,6 +363,30 @@ function renderMetadata() {
   document.getElementById('animeTotalEpisodes').innerText = mediaDetails.episodes || "?";
   document.getElementById('animeScore').innerText = mediaDetails.averageScore ? `${mediaDetails.averageScore}%` : "N/A";
 
+  // Next Episode Countdown Timer Ticker
+  const nextEpisodeRow = document.getElementById('nextEpisodeRow');
+  const animeNextEpisode = document.getElementById('animeNextEpisode');
+  if (nextEpisodeRow && animeNextEpisode) {
+    if (mediaDetails.nextAiringEpisode) {
+      const airingAt = mediaDetails.nextAiringEpisode.airingAt;
+      const episode = mediaDetails.nextAiringEpisode.episode;
+      const timeDiff = airingAt - Math.floor(Date.now() / 1000);
+      
+      if (timeDiff > 0) {
+        animeNextEpisode.className = "font-semibold text-indigo-400 countdown-ticker";
+        animeNextEpisode.setAttribute('data-airing-at', airingAt);
+        animeNextEpisode.setAttribute('data-episode', episode);
+        animeNextEpisode.removeAttribute('data-expired');
+        animeNextEpisode.innerText = formatCountdownText(airingAt, episode);
+        nextEpisodeRow.classList.remove('hidden');
+      } else {
+        nextEpisodeRow.classList.add('hidden');
+      }
+    } else {
+      nextEpisodeRow.classList.add('hidden');
+    }
+  }
+
   // Genres
   const genresContainer = document.getElementById('genresContainer');
   if (genresContainer) {
@@ -391,7 +430,21 @@ function renderEpisodesList(preservePage = false) {
   if (gridEl) gridEl.classList.remove('hidden');
 
   const progress = watchlistRecord.progress;
-  const totalEpisodes = mediaDetails.episodes || Math.max(12, progress);
+  const isNotYetReleased = mediaDetails.status === 'NOT_YET_RELEASED';
+  let releasedLimit = Infinity;
+  if (isNotYetReleased) {
+    releasedLimit = 0;
+  } else if (mediaDetails.nextAiringEpisode) {
+    const timeDiff = mediaDetails.nextAiringEpisode.airingAt - Math.floor(Date.now() / 1000);
+    releasedLimit = timeDiff > 0 ? mediaDetails.nextAiringEpisode.episode - 1 : mediaDetails.nextAiringEpisode.episode;
+  } else if (mediaDetails.episodes) {
+    releasedLimit = mediaDetails.episodes;
+  }
+
+  let totalEpisodes = mediaDetails.episodes || Math.max(12, progress);
+  if (releasedLimit !== Infinity && totalEpisodes < releasedLimit) {
+    totalEpisodes = releasedLimit;
+  }
   document.getElementById('progressDisplay').innerText = `${progress} / ${mediaDetails.episodes || '?'}`;
 
   // Determine current page
@@ -450,23 +503,39 @@ function renderEpisodeRange(start, end) {
 
   const progress = watchlistRecord.progress;
 
+  const isNotYetReleased = mediaDetails.status === 'NOT_YET_RELEASED';
+  let releasedLimit = Infinity;
+  if (isNotYetReleased) {
+    releasedLimit = 0;
+  } else if (mediaDetails.nextAiringEpisode) {
+    const timeDiff = mediaDetails.nextAiringEpisode.airingAt - Math.floor(Date.now() / 1000);
+    releasedLimit = timeDiff > 0 ? mediaDetails.nextAiringEpisode.episode - 1 : mediaDetails.nextAiringEpisode.episode;
+  } else if (mediaDetails.episodes) {
+    releasedLimit = mediaDetails.episodes;
+  }
+
   for (let i = start; i <= end; i++) {
     const isWatched = i <= progress;
+    const isReleased = i <= releasedLimit;
     
     const epCard = document.createElement('div');
-    epCard.className = `flex items-center justify-between p-3 rounded-2xl border transition-all cursor-pointer ${
-      isWatched 
-        ? 'bg-indigo-950/30 border-indigo-500/30 hover:border-indigo-500/50' 
-        : 'bg-gray-900/60 border-gray-700/60 hover:border-gray-600'
-    }`;
-    
-    epCard.onclick = () => {
-      if (progress === i) {
-        updateWatchlistProgress(i - 1);
-      } else {
-        updateWatchlistProgress(i);
-      }
-    };
+    if (!isReleased) {
+      epCard.className = "flex items-center justify-between p-3 rounded-2xl border bg-gray-900/30 border-gray-800/40 text-gray-500 cursor-not-allowed opacity-50";
+    } else {
+      epCard.className = `flex items-center justify-between p-3 rounded-2xl border transition-all cursor-pointer ${
+        isWatched 
+          ? 'bg-indigo-950/30 border-indigo-500/30 hover:border-indigo-500/50' 
+          : 'bg-gray-900/60 border-gray-700/60 hover:border-gray-600'
+      }`;
+      
+      epCard.onclick = () => {
+        if (progress === i) {
+          updateWatchlistProgress(i - 1);
+        } else {
+          updateWatchlistProgress(i);
+        }
+      };
+    }
 
     let thumbnailHtml = `<div class="w-16 h-10 bg-gray-800 rounded-lg flex items-center justify-center shrink-0"><span class="text-xs font-semibold text-gray-500">Ep ${i}</span></div>`;
     let titleHtml = `<p class="font-bold text-sm text-white line-clamp-1">Episode ${i}</p>`;
@@ -489,6 +558,57 @@ function renderEpisodeRange(start, end) {
   }
 }
 
+function formatCountdownText(airingAt, episode) {
+  const timeNow = Math.floor(Date.now() / 1000);
+  const timeDiff = airingAt - timeNow;
+  if (timeDiff <= 0) {
+    return "Aired recently";
+  }
+
+  const days = Math.floor(timeDiff / (3600 * 24));
+  const hours = Math.floor((timeDiff % (3600 * 24)) / 3600);
+  const minutes = Math.floor((timeDiff % 3600) / 60);
+  const seconds = timeDiff % 60;
+
+  if (days > 0) {
+    return `Ep ${episode} in ${days}d ${hours}h ${minutes}m`;
+  } else {
+    return `Ep ${episode} in ${hours}h ${minutes}m ${seconds}s`;
+  }
+}
+
+let countdownInterval = null;
+function startCountdownTicker() {
+  if (countdownInterval) clearInterval(countdownInterval);
+  countdownInterval = setInterval(() => {
+    const tickers = document.querySelectorAll('.countdown-ticker');
+    let needsRefresh = false;
+
+    tickers.forEach(el => {
+      const airingAt = parseInt(el.getAttribute('data-airing-at'), 10);
+      const episode = parseInt(el.getAttribute('data-episode'), 10);
+
+      if (isNaN(airingAt) || isNaN(episode)) return;
+
+      const newText = formatCountdownText(airingAt, episode);
+      if (el.innerText !== newText) {
+        el.innerText = newText;
+      }
+
+      if (airingAt <= Math.floor(Date.now() / 1000)) {
+        if (!el.dataset.expired) {
+          el.dataset.expired = "true";
+          needsRefresh = true;
+        }
+      }
+    });
+
+    if (needsRefresh) {
+      console.log("Countdown reached 0. Refreshing metadata...");
+      main();
+    }
+  }, 1000);
+}
 
 // Initial script execution entrypoint
 async function main() {
@@ -526,6 +646,9 @@ async function main() {
 
   // Render episodes grid list checklist
   renderEpisodesList();
+
+  // Start live countdown tickers
+  startCountdownTicker();
 }
 
 main();
