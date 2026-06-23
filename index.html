@@ -109,14 +109,28 @@
       </div>
 
       <!-- Pagination controls for watchlist (placed below sections) -->
-      <div id="watchlistPagination" class="hidden flex justify-center items-center gap-4 mt-6">
-        <button id="prevWatchlistPage" onclick="changeWatchlistPage(-1)" class="bg-gray-800 hover:bg-gray-700 text-white border border-gray-700/60 text-xs px-3.5 py-2 rounded-lg font-bold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
-          ◀ Previous
-        </button>
-        <span id="watchlistPageNum" class="text-xs text-gray-400 font-semibold min-w-[80px] text-center">Page 1 of 1</span>
-        <button id="nextWatchlistPage" onclick="changeWatchlistPage(1)" class="bg-gray-800 hover:bg-gray-700 text-white border border-gray-700/60 text-xs px-3.5 py-2 rounded-lg font-bold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
-          Next ▶
-        </button>
+      <div id="watchlistPagination" class="hidden flex flex-col sm:flex-row justify-center items-center gap-4 mt-6">
+        <div class="flex items-center gap-4">
+          <button id="prevWatchlistPage" onclick="changeWatchlistPage(-1)" class="bg-gray-800 hover:bg-gray-700 text-white border border-gray-700/60 text-xs px-3.5 py-2 rounded-lg font-bold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
+            ◀ Previous
+          </button>
+          <span id="watchlistPageNum" class="text-xs text-gray-400 font-semibold min-w-[80px] text-center">Page 1 of 1</span>
+          <button id="nextWatchlistPage" onclick="changeWatchlistPage(1)" class="bg-gray-800 hover:bg-gray-700 text-white border border-gray-700/60 text-xs px-3.5 py-2 rounded-lg font-bold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
+            Next ▶
+          </button>
+        </div>
+        
+        <div class="flex items-center gap-2 border-t sm:border-t-0 sm:border-l border-gray-800 pt-3 sm:pt-0 sm:pl-4">
+          <span class="text-xs text-gray-400 font-semibold">Items per page:</span>
+          <select id="itemsPerPageSelect" onchange="changeItemsPerPage(this.value)" class="bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1 text-xs text-white focus:outline-none focus:border-indigo-500 cursor-pointer">
+            <option value="6">6</option>
+            <option value="8">8</option>
+            <option value="10">10</option>
+            <option value="12">12</option>
+            <option value="16">16</option>
+            <option value="20">20</option>
+          </select>
+        </div>
       </div>
     </section>
   </div>

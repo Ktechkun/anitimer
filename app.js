@@ -5,7 +5,8 @@ let currentTab = 'watchlist'; // 'watchlist' or 'seasonal'
 let watchlistAbortController = null;
 let seasonalAbortController = null;
 let watchlistCurrentPage = 1;
-const watchlistItemsPerPage = 6;
+let watchlistItemsPerPage = parseInt(localStorage.getItem('watchlist_items_per_page'), 10) || 8;
+if (watchlistItemsPerPage < 6) watchlistItemsPerPage = 8;
 let isFetchingMetadata = false;
 
 // Expose states to window context via getters/setters to support external script modules
@@ -24,6 +25,21 @@ Object.defineProperty(window, 'watchlistCurrentPage', {
   set: (val) => { watchlistCurrentPage = val; },
   configurable: true
 });
+
+
+// Date equivalence helper comparing Unix timestamps, millisecond timestamps, and ISO strings
+function isDateEqual(val1, val2) {
+  if (!val1 && !val2) return true;
+  if (!val1 || !val2) return false;
+  
+  const t1 = typeof val1 === 'number' ? val1 : new Date(val1).getTime();
+  const t2 = typeof val2 === 'number' ? val2 : new Date(val2).getTime();
+  
+  const ms1 = t1 > 9999999999 ? t1 : t1 * 1000;
+  const ms2 = t2 > 9999999999 ? t2 : t2 * 1000;
+  
+  return ms1 === ms2;
+}
 
 
 // Base API call to AniList GraphQL
@@ -100,7 +116,7 @@ function renderSearchResults(results) {
   });
 }
 
-function addToWatchlist(id, title) {
+async function addToWatchlist(id, title) {
   if (!window.currentUser) {
     // Save pending add task
     sessionStorage.setItem('pending_addition', JSON.stringify({ id, title, type: 'search' }));
@@ -109,13 +125,32 @@ function addToWatchlist(id, title) {
     return;
   }
   if (watchlist.some(item => item.id === id)) return alert("Already added!");
-  watchlist.push({ id, title, progress: 0 });
+  const newItem = { id, title, progress: 0 };
+  watchlist.push(newItem);
+
+  // Direct insert to Supabase
+  if (window.supabaseClient && window.currentUser) {
+    const cols = computeWatchlistColumns(newItem);
+    const { error } = await window.supabaseClient
+      .from('watchlist')
+      .insert({
+        user_id: window.currentUser.id,
+        anime_id: id,
+        title: title,
+        progress: 0,
+        status: cols.status,
+        next_airing_at: cols.next_airing_at,
+        last_released_at: cols.last_released_at
+      });
+    if (error) console.error("Failed to insert item to Supabase:", error);
+  }
+
   saveAndRefresh(true, false);
   document.getElementById('searchResults').innerHTML = '';
   document.getElementById('searchInput').value = '';
 }
 
-function incrementProgress(id) {
+async function incrementProgress(id) {
   const item = watchlist.find(a => a.id === id);
   if (item) {
     const apiItem = (cachedApiDetails && cachedApiDetails.find(a => a.id === id)) || {};
@@ -137,11 +172,28 @@ function incrementProgress(id) {
       return;
     }
     item.progress++;
+
+    // Direct update to Supabase
+    if (window.supabaseClient && window.currentUser) {
+      const cols = computeWatchlistColumns(item);
+      const { error } = await window.supabaseClient
+        .from('watchlist')
+        .update({
+          progress: item.progress,
+          status: cols.status,
+          next_airing_at: cols.next_airing_at,
+          last_released_at: cols.last_released_at
+        })
+        .eq('user_id', window.currentUser.id)
+        .eq('anime_id', id);
+      if (error) console.error("Failed to update progress in Supabase:", error);
+    }
+
     saveAndRefresh(false, true);
   }
 }
 
-function updateProgressDirect(id, element) {
+async function updateProgressDirect(id, element) {
   let val = parseInt(element.innerText.trim(), 10);
   if (isNaN(val) || val < 0) {
     val = 0;
@@ -170,6 +222,23 @@ function updateProgressDirect(id, element) {
 
     if (item.progress !== val) {
       item.progress = val;
+
+      // Direct update to Supabase
+      if (window.supabaseClient && window.currentUser) {
+        const cols = computeWatchlistColumns(item);
+        const { error } = await window.supabaseClient
+          .from('watchlist')
+          .update({
+            progress: item.progress,
+            status: cols.status,
+            next_airing_at: cols.next_airing_at,
+            last_released_at: cols.last_released_at
+          })
+          .eq('user_id', window.currentUser.id)
+          .eq('anime_id', id);
+        if (error) console.error("Failed to update progress in Supabase:", error);
+      }
+
       saveAndRefresh(false, true);
     } else {
       element.innerText = val;
@@ -184,16 +253,24 @@ function checkProgressKey(event, element) {
   }
 }
 
-function deleteAnime(id) {
+async function deleteAnime(id) {
   watchlist = watchlist.filter(item => item.id !== id);
+
+  // Direct delete from Supabase
+  if (window.supabaseClient && window.currentUser) {
+    const { error } = await window.supabaseClient
+      .from('watchlist')
+      .delete()
+      .eq('user_id', window.currentUser.id)
+      .eq('anime_id', id);
+    if (error) console.error("Failed to delete item from Supabase:", error);
+  }
+
   saveAndRefresh(false, true);
 }
 
 async function saveAndRefresh(forceRefresh = false, cacheOnly = false) {
   localStorage.setItem('anime_watchlist', JSON.stringify(watchlist));
-  if (typeof syncDataToSupabase === 'function') {
-    await syncDataToSupabase();
-  }
   if (currentTab === 'watchlist') {
     loadWatchlistDetails(forceRefresh, cacheOnly);
   }
@@ -292,17 +369,24 @@ async function loadWatchlistDetails(forceRefresh = false, cacheOnly = false) {
   let maxPage = 1;
   let upToDateListCount = 0;
 
+  let dbItemsList = null;
+
   // Render logic partitions based on auth state
   if (window.supabaseClient && window.currentUser) {
     try {
-      // 1. Fetch Can Watch items (all)
-      const { data: canWatchDb, error: err1 } = await window.supabaseClient
+      // Fetch all items for this user in a single request, sorted on database side
+      const { data: dbItems, error: fetchErr } = await window.supabaseClient
         .from('watchlist')
         .select('anime_id, title, progress, status, next_airing_at, last_released_at')
-        .eq('status', 'can_watch');
-      
-      if (err1) throw err1;
-      canWatchList = (canWatchDb || []).map(item => ({
+        .eq('user_id', window.currentUser.id)
+        .order('next_airing_at', { ascending: true, nullsFirst: false })
+        .order('last_released_at', { ascending: false })
+        .order('title', { ascending: true });
+
+      if (fetchErr) throw fetchErr;
+      dbItemsList = dbItems;
+
+      const allItems = (dbItems || []).map(item => ({
         id: item.anime_id,
         title: item.title,
         progress: item.progress,
@@ -311,42 +395,19 @@ async function loadWatchlistDetails(forceRefresh = false, cacheOnly = false) {
         last_released_at: item.last_released_at
       }));
 
-      // 2. Fetch total count of Caught Up items
-      const { count: caughtUpCount, error: err2 } = await window.supabaseClient
-        .from('watchlist')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'caught_up');
+      // Split into canWatch and caughtUp in memory (preserving database sort order)
+      canWatchList = allItems.filter(item => item.status === 'can_watch');
+      const caughtUpList = allItems.filter(item => item.status === 'caught_up');
 
-      if (err2) throw err2;
-      upToDateListCount = caughtUpCount || 0;
+      upToDateListCount = caughtUpList.length;
       maxPage = Math.ceil(upToDateListCount / watchlistItemsPerPage) || 1;
 
       if (watchlistCurrentPage > maxPage) {
         watchlistCurrentPage = maxPage;
       }
 
-      // 3. Fetch paginated Caught Up items
       const startIndex = (watchlistCurrentPage - 1) * watchlistItemsPerPage;
-      const endIndex = startIndex + watchlistItemsPerPage - 1;
-
-      const { data: upToDateDb, error: err3 } = await window.supabaseClient
-        .from('watchlist')
-        .select('anime_id, title, progress, status, next_airing_at, last_released_at')
-        .eq('status', 'caught_up')
-        .order('next_airing_at', { ascending: true, nullsFirst: false })
-        .order('last_released_at', { ascending: false })
-        .order('title', { ascending: true })
-        .range(startIndex, endIndex);
-
-      if (err3) throw err3;
-      paginatedUpToDateList = (upToDateDb || []).map(item => ({
-        id: item.anime_id,
-        title: item.title,
-        progress: item.progress,
-        status: item.status,
-        next_airing_at: item.next_airing_at,
-        last_released_at: item.last_released_at
-      }));
+      paginatedUpToDateList = caughtUpList.slice(startIndex, startIndex + watchlistItemsPerPage);
 
       // We check the combined counts to see if the watchlist is empty overall
       const totalCount = canWatchList.length + upToDateListCount;
@@ -430,6 +491,11 @@ async function loadWatchlistDetails(forceRefresh = false, cacheOnly = false) {
       document.getElementById('watchlistPageNum').innerText = `Page ${watchlistCurrentPage} of ${maxPage}`;
       document.getElementById('prevWatchlistPage').disabled = watchlistCurrentPage === 1;
       document.getElementById('nextWatchlistPage').disabled = watchlistCurrentPage === maxPage;
+      
+      const itemsPerPageSelect = document.getElementById('itemsPerPageSelect');
+      if (itemsPerPageSelect) {
+        itemsPerPageSelect.value = watchlistItemsPerPage;
+      }
     } else {
       paginationContainer.classList.add('hidden');
     }
@@ -509,19 +575,41 @@ async function loadWatchlistDetails(forceRefresh = false, cacheOnly = false) {
 
       // Propagate new scheduling metadata to database in the background if logged in
       if (window.supabaseClient && window.currentUser && typeof computeWatchlistColumns === 'function') {
-        newMedia.forEach(async item => {
+        newMedia.forEach(item => {
           const localItem = watchlist.find(w => w.id === item.id);
           if (localItem) {
             const cols = computeWatchlistColumns(localItem);
-            await window.supabaseClient
-              .from('watchlist')
-              .update({
-                status: cols.status,
-                next_airing_at: cols.next_airing_at,
-                last_released_at: cols.last_released_at
-              })
-              .eq('user_id', window.currentUser.id)
-              .eq('anime_id', item.id);
+            
+            // Compare against dbItemsList (if fetched) or fallback to localItem properties
+            const dbMatch = dbItemsList ? dbItemsList.find(db => db.anime_id === item.id) : null;
+            const currentStatus = dbMatch ? dbMatch.status : localItem.status;
+            const currentNextAiring = dbMatch ? dbMatch.next_airing_at : localItem.next_airing_at;
+            const currentLastReleased = dbMatch ? dbMatch.last_released_at : localItem.last_released_at;
+            
+            const needsUpdate = currentStatus !== cols.status ||
+                                currentNextAiring !== cols.next_airing_at ||
+                                currentLastReleased !== cols.last_released_at;
+                                
+            if (needsUpdate) {
+              // Update local memory and cache
+              localItem.status = cols.status;
+              localItem.next_airing_at = cols.next_airing_at;
+              localItem.last_released_at = cols.last_released_at;
+              localStorage.setItem('anime_watchlist', JSON.stringify(watchlist));
+              
+              window.supabaseClient
+                .from('watchlist')
+                .update({
+                  status: cols.status,
+                  next_airing_at: cols.next_airing_at,
+                  last_released_at: cols.last_released_at
+                })
+                .eq('user_id', window.currentUser.id)
+                .eq('anime_id', item.id)
+                .then(({ error }) => {
+                  if (error) console.error("Failed to propagate scheduling metadata to Supabase:", error);
+                });
+            }
           }
         });
       }
@@ -847,7 +935,7 @@ function renderSeasonalList(mediaList) {
   });
 }
 
-function addToWatchlistFromSeasonal(id, title, coverImage) {
+async function addToWatchlistFromSeasonal(id, title, coverImage) {
   if (!window.currentUser) {
     // Save pending add task
     sessionStorage.setItem('pending_addition', JSON.stringify({ id, title, coverImage, type: 'seasonal' }));
@@ -856,7 +944,8 @@ function addToWatchlistFromSeasonal(id, title, coverImage) {
     return;
   }
   if (watchlist.some(item => item.id === id)) return alert("Already added!");
-  watchlist.push({ id, title, progress: 0 });
+  const newItem = { id, title, progress: 0 };
+  watchlist.push(newItem);
   
   // Update cache manually so we don't have to query AniList for the metadata of the newly added show
   const existingInCache = cachedApiDetails.find(c => c.id === id);
@@ -871,8 +960,25 @@ function addToWatchlistFromSeasonal(id, title, coverImage) {
     });
     localStorage.setItem('anime_metadata_cache', JSON.stringify(cachedApiDetails));
   }
+
+  // Direct insert to Supabase
+  if (window.supabaseClient && window.currentUser) {
+    const cols = computeWatchlistColumns(newItem);
+    const { error } = await window.supabaseClient
+      .from('watchlist')
+      .insert({
+        user_id: window.currentUser.id,
+        anime_id: id,
+        title: title,
+        progress: 0,
+        status: cols.status,
+        next_airing_at: cols.next_airing_at,
+        last_released_at: cols.last_released_at
+      });
+    if (error) console.error("Failed to insert seasonal item to Supabase:", error);
+  }
   
-  saveAndRefresh(false, true); // save watchlist and sync to Supabase
+  saveAndRefresh(false, true); // save watchlist
   
   // Re-render seasonal list to reflect "In Watchlist" state
   loadSeasonalAnime();
@@ -936,3 +1042,17 @@ loadWatchlistDetails();
 
 // Start live countdown tickers
 startCountdownTicker();
+
+function changeItemsPerPage(val) {
+  const newVal = parseInt(val, 10);
+  if (isNaN(newVal) || newVal < 6) return;
+  
+  watchlistItemsPerPage = newVal;
+  localStorage.setItem('watchlist_items_per_page', watchlistItemsPerPage);
+  
+  // Reset page to 1
+  watchlistCurrentPage = 1;
+  
+  // Re-load details
+  loadWatchlistDetails();
+}

@@ -2,6 +2,20 @@
 window.supabaseClient = null;
 window.currentUser = null;
 
+// Helper to compare dates/timestamps of different types (Unix, milliseconds, ISO strings)
+function isDateEqual(val1, val2) {
+  if (!val1 && !val2) return true;
+  if (!val1 || !val2) return false;
+  
+  const t1 = typeof val1 === 'number' ? val1 : new Date(val1).getTime();
+  const t2 = typeof val2 === 'number' ? val2 : new Date(val2).getTime();
+  
+  const ms1 = t1 > 9999999999 ? t1 : t1 * 1000;
+  const ms2 = t2 > 9999999999 ? t2 : t2 * 1000;
+  
+  return ms1 === ms2;
+}
+
 // Initialize Supabase Client
 async function initSupabase() {
   try {
@@ -128,8 +142,8 @@ async function syncWatchlistWithSupabase() {
         const cols = computeWatchlistColumns({ id: localItem.id, progress: mergedProgress }, dbMatch);
         const needsDbUpdate = localItem.progress > dbMatch.progress || 
                               dbMatch.status !== cols.status ||
-                              dbMatch.next_airing_at !== cols.next_airing_at ||
-                              dbMatch.last_released_at !== cols.last_released_at;
+                              !isDateEqual(dbMatch.next_airing_at, cols.next_airing_at) ||
+                              !isDateEqual(dbMatch.last_released_at, cols.last_released_at);
         if (needsDbUpdate) {
           dbMatch.progress = mergedProgress;
           dbMatch.status = cols.status;
@@ -237,28 +251,41 @@ async function syncDataToSupabase() {
   try {
     const { data: dbItems, error: fetchErr } = await window.supabaseClient
       .from('watchlist')
-      .select('anime_id');
+      .select('anime_id, progress, status, next_airing_at, last_released_at');
       
     if (fetchErr) throw fetchErr;
     
-    const dbIds = dbItems.map(d => d.anime_id);
+    const dbItemsMap = new Map();
+    (dbItems || []).forEach(item => {
+      dbItemsMap.set(item.anime_id, item);
+    });
+
     const currentIds = watchlist.map(w => w.id);
     
-    // Upsert current items
+    // Only update or insert when changes are detected
     for (const item of watchlist) {
       const cols = computeWatchlistColumns(item);
-      if (dbIds.includes(item.id)) {
-        // Update progress and metadata sorting columns
-        await window.supabaseClient
-          .from('watchlist')
-          .update({ 
-            progress: item.progress,
-            status: cols.status,
-            next_airing_at: cols.next_airing_at,
-            last_released_at: cols.last_released_at
-          })
-          .eq('user_id', window.currentUser.id)
-          .eq('anime_id', item.id);
+      const dbMatch = dbItemsMap.get(item.id);
+      
+      if (dbMatch) {
+        // Check if progress or computed schedule details have changed
+        const needsUpdate = item.progress !== dbMatch.progress ||
+                            cols.status !== dbMatch.status ||
+                            !isDateEqual(dbMatch.next_airing_at, cols.next_airing_at) ||
+                            !isDateEqual(dbMatch.last_released_at, cols.last_released_at);
+        
+        if (needsUpdate) {
+          await window.supabaseClient
+            .from('watchlist')
+            .update({ 
+              progress: item.progress,
+              status: cols.status,
+              next_airing_at: cols.next_airing_at,
+              last_released_at: cols.last_released_at
+            })
+            .eq('user_id', window.currentUser.id)
+            .eq('anime_id', item.id);
+        }
       } else {
         // Insert new entry
         await window.supabaseClient
@@ -276,6 +303,7 @@ async function syncDataToSupabase() {
     }
     
     // Delete items that were removed
+    const dbIds = Array.from(dbItemsMap.keys());
     const toDelete = dbIds.filter(id => !currentIds.includes(id));
     if (toDelete.length > 0) {
       await window.supabaseClient
